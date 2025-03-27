@@ -578,7 +578,8 @@ public class RemoteExecutionService {
               toolSignature != null ? toolSignature.toolInputs::contains : input -> false,
               scrubber,
               context.getInputMetadataProvider(),
-              context.getPathResolver());
+              context.getPathResolver(),
+              remotePathResolver);
 
       // Get the remote platform properties.
       Platform platform;
@@ -1934,7 +1935,8 @@ public class RemoteExecutionService {
                 toolSignature != null ? toolSignature.toolInputs::contains : input -> false,
                 scrubber,
                 context.getInputMetadataProvider(),
-                context.getPathResolver());
+                context.getPathResolver(),
+                action.getRemotePathResolver());
       }
 
       remoteExecutionCache.ensureInputsPresent(
