@@ -191,7 +191,8 @@ public class RemoteSpawnRunner implements SpawnRunner {
     boolean acceptCachedResult = remoteExecutionService.getReadCachePolicy(spawn).allowAnyCache();
     boolean uploadLocalResults = remoteExecutionService.getWriteCachePolicy(spawn).allowAnyCache();
 
-    RemoteAction action = remoteExecutionService.buildRemoteAction(spawn, context);
+    RemoteAction action =
+        remoteExecutionService.buildRemoteAction(spawn, context, /* forExecution= */ true);
 
     context.setDigest(digestUtil.asSpawnLogProto(action.getActionKey()));
 
