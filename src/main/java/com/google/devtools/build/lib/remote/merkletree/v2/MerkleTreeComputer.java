@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.FileStateType;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
+import com.google.devtools.build.lib.actions.PathMapper;
 import com.google.devtools.build.lib.actions.RunfilesArtifactValue;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.StaticInputMetadataProvider;
@@ -178,7 +179,8 @@ public final class MerkleTreeComputer {
     // well as the prolonged retention of mapped paths.
     var allInputs =
         ImmutableList.sortedCopyOf(
-            Comparator.comparing(input -> getOutputPath(input, remotePathResolver)),
+            Comparator.comparing(
+                input -> getOutputPath(input, remotePathResolver, spawn.getPathMapper())),
             new AbstractCollection<ActionInput>() {
               @Override
               public Iterator<ActionInput> iterator() {
@@ -192,7 +194,9 @@ public final class MerkleTreeComputer {
             });
     return build(
         Lists.transform(
-            allInputs, input -> Map.entry(getOutputPath(input, remotePathResolver), input)),
+            allInputs,
+            input ->
+                Map.entry(getOutputPath(input, remotePathResolver, spawn.getPathMapper()), input)),
         isToolInput,
         scrubber != null ? scrubber.forSpawn(spawn) : null,
         metadataProvider,
@@ -203,11 +207,9 @@ public final class MerkleTreeComputer {
   // TODO: This may not be the correct path to test isToolInput on with the sibling repository
   // layout enabled, but this isn't covered by any tests.
   private static PathFragment getOutputPath(
-      ActionInput input, RemotePathResolver remotePathResolver) {
-    return PathFragment.create(
-        remotePathResolver.localPathToOutputPath(
-            PathFragment.create(remotePathResolver.getWorkingDirectory())
-                .getRelative(input.getExecPath())));
+      ActionInput input, RemotePathResolver remotePathResolver, PathMapper pathMapper) {
+    return PathFragment.create(remotePathResolver.getWorkingDirectory())
+        .getRelative(pathMapper.map(input.getExecPath()));
   }
 
   public MerkleTree buildForFiles(SortedMap<PathFragment, Path> inputs)
