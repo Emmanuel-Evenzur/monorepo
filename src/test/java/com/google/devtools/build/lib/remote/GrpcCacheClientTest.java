@@ -59,7 +59,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningScheduledExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.devtools.build.lib.actions.ActionInputHelper;
-import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
@@ -291,7 +290,7 @@ public class GrpcCacheClientTest {
     VirtualActionInput virtualActionInput =
         ActionsTestUtil.createVirtualActionInput(execPath, "hello");
     MerkleTree merkleTree =
-        new MerkleTreeComputer(DIGEST_UTIL)
+        new MerkleTreeComputer(DIGEST_UTIL, client)
             .buildForSpawn(
                 new SpawnBuilder("unused")
                     .withInputs(virtualActionInput)
@@ -299,8 +298,7 @@ public class GrpcCacheClientTest {
                     .build(),
                 Predicates.alwaysFalse(),
                 /* spawnScrubber= */ null,
-                fakeFileCache,
-                ArtifactPathResolver.forExecRoot(execRoot),
+                null,
                 remotePathResolver,
                 MerkleTreeComputer.SubTreePolicy.UPLOAD);
     Digest digest = DIGEST_UTIL.compute(virtualActionInput.getBytes().toByteArray());

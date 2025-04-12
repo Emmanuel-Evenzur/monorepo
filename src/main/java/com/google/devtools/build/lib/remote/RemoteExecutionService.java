@@ -234,7 +234,8 @@ public class RemoteExecutionService {
     this.remoteOptions = remoteOptions;
     this.combinedCache = combinedCache;
     this.remoteExecutor = remoteExecutor;
-    this.merkleTreeComputer = new MerkleTreeComputer(digestUtil);
+    this.merkleTreeComputer =
+        new MerkleTreeComputer(digestUtil, combinedCache, buildRequestId, commandId);
 
     Caffeine<Object, Object> merkleTreeCacheBuilder = Caffeine.newBuilder().softValues();
     // remoteMerkleTreesCacheSize = 0 means limitless.
@@ -584,8 +585,7 @@ public class RemoteExecutionService {
               spawn,
               toolSignature != null ? toolSignature.toolInputs::contains : input -> false,
               scrubber,
-              context.getInputMetadataProvider(),
-              context.getPathResolver(),
+              context,
               remotePathResolver,
               subTreePolicy);
 
@@ -1914,7 +1914,7 @@ public class RemoteExecutionService {
    * <p>Must be called before calling {@link #executeRemotely}.
    */
   public void uploadInputsIfNotPresent(RemoteAction action, boolean force)
-      throws IOException, ExecException, ForbiddenActionInputException, InterruptedException {
+      throws IOException, ExecException, InterruptedException {
     checkState(!shutdown.get(), "shutdown");
     checkState(mayBeExecutedRemotely(action.getSpawn()), "spawn can't be executed remotely");
 
