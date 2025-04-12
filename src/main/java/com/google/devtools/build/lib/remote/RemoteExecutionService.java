@@ -563,13 +563,12 @@ public class RemoteExecutionService {
   @VisibleForTesting
   RemoteAction buildRemoteAction(Spawn spawn, SpawnExecutionContext context)
       throws IOException, ExecException, InterruptedException {
-    return buildRemoteAction(
-        spawn, context, MerkleTreeComputer.Options.builder().forExecution(true).build());
+    return buildRemoteAction(spawn, context, MerkleTreeComputer.SubTreePolicy.UPLOAD);
   }
 
   /** Creates a new {@link RemoteAction} instance from spawn. */
   public RemoteAction buildRemoteAction(
-      Spawn spawn, SpawnExecutionContext context, MerkleTreeComputer.Options options)
+      Spawn spawn, SpawnExecutionContext context, MerkleTreeComputer.SubTreePolicy subTreePolicy)
       throws IOException, ExecException, InterruptedException {
     maybeAcquireRemoteActionBuildingSemaphore(ProfilerTask.REMOTE_SETUP);
     try {
@@ -588,7 +587,7 @@ public class RemoteExecutionService {
               context.getInputMetadataProvider(),
               context.getPathResolver(),
               remotePathResolver,
-              options);
+              subTreePolicy);
 
       // Get the remote platform properties.
       Platform platform;
@@ -1932,9 +1931,9 @@ public class RemoteExecutionService {
     maybeAcquireRemoteActionBuildingSemaphore(ProfilerTask.UPLOAD_TIME);
     try {
       var merkleTree = action.getMerkleTree();
-      if (merkleTree == null) {
-        // --experimental_remote_discard_merkle_trees was provided.
-        // Recompute the input root.
+      if (merkleTree == null || force) {
+        // --experimental_remote_discard_merkle_trees was provided or the remote lost a shared
+        // subtree uploaded previously. Recompute the input root and upload everything.
         Spawn spawn = action.getSpawn();
         SpawnExecutionContext context = action.getSpawnExecutionContext();
         ToolSignature toolSignature = getToolSignature(spawn, context);
@@ -1946,7 +1945,7 @@ public class RemoteExecutionService {
                 context.getInputMetadataProvider(),
                 context.getPathResolver(),
                 action.getRemotePathResolver(),
-                MerkleTreeComputer.Options.builder().forExecution(true).build());
+                MerkleTreeComputer.SubTreePolicy.FORCE_UPLOAD);
       }
 
       remoteExecutionCache.ensureInputsPresent(

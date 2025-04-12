@@ -13,7 +13,6 @@ import build.bazel.remote.execution.v2.NodeProperty;
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.google.auto.value.AutoBuilder;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Collections2;
@@ -93,22 +92,6 @@ public final class MerkleTreeComputer {
             new MerkleTreeRoot(emptyDigest, 0, 0), ImmutableMap.of(emptyDigest, emptyBlob));
   }
 
-  public record Options(boolean forExecution, boolean refresh) {
-    public static Builder builder() {
-      return new AutoBuilder_MerkleTreeComputer_Options_Builder().refresh(false);
-    }
-
-    /** Builder type for {@link Options}. */
-    @AutoBuilder
-    public abstract static class Builder {
-      public abstract Builder forExecution(boolean value);
-
-      public abstract Builder refresh(boolean value);
-
-      public abstract Options build();
-    }
-  }
-
   private record MerkleTreeRoot(Digest rootDigest, long inputFiles, long inputBytes) {}
 
   // TODO: Drop blobs after they have been uploaded.
@@ -162,6 +145,12 @@ public final class MerkleTreeComputer {
     ListenableFuture<Void> upload(Digest digest, VirtualActionInput virtualActionInput);
   }
 
+  public enum SubTreePolicy {
+    DISCARD,
+    UPLOAD,
+    FORCE_UPLOAD,
+  }
+
   public MerkleTree buildForSpawn(
       Spawn spawn,
       Predicate<PathFragment> isToolInput,
@@ -169,7 +158,7 @@ public final class MerkleTreeComputer {
       InputMetadataProvider metadataProvider,
       ArtifactPathResolver artifactPathResolver,
       RemotePathResolver remotePathResolver,
-      Options options)
+      SubTreePolicy subTreePolicy)
       throws IOException, InterruptedException {
     if (!Objects.equals(scrubber, lastScrubber)) {
       persistentToolSubTreeCache.invalidateAll();
@@ -208,7 +197,7 @@ public final class MerkleTreeComputer {
         scrubber != null ? scrubber.forSpawn(spawn) : null,
         metadataProvider,
         artifactPathResolver,
-        options);
+        subTreePolicy);
   }
 
   // TODO: This may not be the correct path to test isToolInput on with the sibling repository
@@ -239,7 +228,7 @@ public final class MerkleTreeComputer {
         /* spawnScrubber= */ null,
         StaticInputMetadataProvider.empty(),
         absolutePathResolver,
-        Options.builder().forExecution(true).build());
+        SubTreePolicy.UPLOAD);
   }
 
   private MerkleTree build(
@@ -248,7 +237,7 @@ public final class MerkleTreeComputer {
       @Nullable SpawnScrubber spawnScrubber,
       InputMetadataProvider metadataProvider,
       ArtifactPathResolver artifactPathResolver,
-      Options options)
+      SubTreePolicy subTreePolicy)
       throws IOException, InterruptedException {
     if (sortedInputs.isEmpty()) {
       return emptyTree;
@@ -289,7 +278,7 @@ public final class MerkleTreeComputer {
         for (String dirToPop : fragmentToPop.splitToListOfSegments().reverse()) {
           byte[] directoryBlob = directoryStack.pop().build().toByteArray();
           Digest directoryBlobDigest = digestUtil.compute(directoryBlob);
-          if (options.forExecution) {
+          if (subTreePolicy != SubTreePolicy.DISCARD) {
             blobs.put(directoryBlobDigest, directoryBlob);
           }
           inputBytes += directoryBlobDigest.getSizeBytes();
@@ -323,9 +312,9 @@ public final class MerkleTreeComputer {
                   isToolInput,
                   metadataProvider,
                   artifactPathResolver,
-                  options);
+                  subTreePolicy);
           currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTree.rootDigest());
-          if (options.forExecution) {
+          if (subTreePolicy != SubTreePolicy.DISCARD) {
             blobs.putAll(subTree.blobs());
           }
           inputFiles += subTree.inputFiles();
@@ -339,9 +328,9 @@ public final class MerkleTreeComputer {
                   isToolInput,
                   metadataProvider,
                   artifactPathResolver,
-                  options);
+                  subTreePolicy);
           currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTree.rootDigest());
-          if (options.forExecution) {
+          if (subTreePolicy != SubTreePolicy.DISCARD) {
             blobs.putAll(subTree.blobs());
           }
           inputFiles += subTree.inputFiles();
@@ -375,9 +364,9 @@ public final class MerkleTreeComputer {
                     isToolInput.test(path),
                     metadataProvider,
                     artifactPathResolver,
-                    options);
+                    subTreePolicy);
             currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTree.rootDigest());
-            if (options.forExecution) {
+            if (subTreePolicy != SubTreePolicy.DISCARD) {
               blobs.putAll(subTree.blobs());
             }
             inputFiles += subTree.inputFiles();
@@ -385,7 +374,7 @@ public final class MerkleTreeComputer {
           } else {
             var digest = DigestUtil.buildDigest(metadata.getDigest(), metadata.getSize());
             addFile(currentDirectory, name, digest, nodeProperties);
-            if (options.forExecution) {
+            if (subTreePolicy != SubTreePolicy.DISCARD) {
               blobs.put(digest, artifactPathResolver.toPath(fileOrSourceDirectory));
             }
             inputFiles++;
@@ -395,7 +384,7 @@ public final class MerkleTreeComputer {
         case VirtualActionInput virtualActionInput -> {
           var digest = digestUtil.compute(virtualActionInput);
           addFile(currentDirectory, name, digest, nodeProperties);
-          if (options.forExecution) {
+          if (subTreePolicy != SubTreePolicy.DISCARD) {
             blobs.put(digest, virtualActionInput);
           }
           inputFiles++;
@@ -418,7 +407,7 @@ public final class MerkleTreeComputer {
           Path inputPath = artifactPathResolver.toPath(input);
           var digest = digestUtil.compute(inputPath);
           addFile(currentDirectory, name, digest, nodeProperties);
-          if (options.forExecution) {
+          if (subTreePolicy != SubTreePolicy.DISCARD) {
             blobs.put(digest, inputPath);
           }
           inputFiles++;
@@ -436,7 +425,7 @@ public final class MerkleTreeComputer {
       Predicate<PathFragment> isToolInput,
       InputMetadataProvider metadataProvider,
       ArtifactPathResolver artifactPathResolver,
-      Options options)
+      SubTreePolicy subTreePolicy)
       throws IOException, InterruptedException {
     // A runfiles tree contains either only tool inputs or only non-tool inputs. It always contains
     // at least one artifact at its canonical location: the executable for which it has been
@@ -459,7 +448,7 @@ public final class MerkleTreeComputer {
         isTool,
         metadataProvider,
         artifactPathResolver,
-        options);
+        subTreePolicy);
   }
 
   private MerkleTree computeForTreeArtifactIfAbsent(
@@ -468,7 +457,7 @@ public final class MerkleTreeComputer {
       Predicate<PathFragment> isToolInput,
       InputMetadataProvider metadataProvider,
       ArtifactPathResolver artifactPathResolver,
-      Options options)
+      SubTreePolicy subTreePolicy)
       throws IOException, InterruptedException {
     // A tree artifact contains either only tool inputs or only non-tool inputs.
     boolean isTool =
@@ -488,7 +477,7 @@ public final class MerkleTreeComputer {
         isTool,
         metadataProvider,
         artifactPathResolver,
-        options);
+        subTreePolicy);
   }
 
   private interface SortedInputsSupplier {
@@ -502,12 +491,12 @@ public final class MerkleTreeComputer {
       boolean isTool,
       InputMetadataProvider metadataProvider,
       ArtifactPathResolver artifactPathResolver,
-      Options options)
+      SubTreePolicy subTreePolicy)
       throws IOException, InterruptedException {
     var cache = isTool ? persistentToolSubTreeCache : persistentNonToolSubTreeCache;
     try {
       var cacheKey = cacheKeyFor(metadata, isTool);
-      if (options.refresh) {
+      if (subTreePolicy == SubTreePolicy.FORCE_UPLOAD) {
         inFlightSubTreeCache.synchronous().invalidate(cacheKey);
       }
       return inFlightSubTreeCache
@@ -522,7 +511,7 @@ public final class MerkleTreeComputer {
                       /* spawnScrubber= */ null,
                       metadataProvider,
                       artifactPathResolver,
-                      options);
+                      subTreePolicy);
                 } catch (IOException e) {
                   throw new UncheckedIOException(e);
                 } catch (InterruptedException e) {

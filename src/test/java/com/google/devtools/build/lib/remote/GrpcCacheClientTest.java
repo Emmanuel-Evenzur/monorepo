@@ -302,7 +302,7 @@ public class GrpcCacheClientTest {
                 fakeFileCache,
                 ArtifactPathResolver.forExecRoot(execRoot),
                 remotePathResolver,
-                MerkleTreeComputer.Options.builder().forExecution(true).build());
+                MerkleTreeComputer.SubTreePolicy.UPLOAD);
     Digest digest = DIGEST_UTIL.compute(virtualActionInput.getBytes().toByteArray());
 
     // Add a fake CAS that responds saying that the above virtual action input is missing
