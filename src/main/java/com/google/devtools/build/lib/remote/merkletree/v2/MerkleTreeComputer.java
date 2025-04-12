@@ -37,8 +37,6 @@ import com.google.devtools.build.lib.actions.StaticInputMetadataProvider;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
-import com.google.devtools.build.lib.remote.CombinedCache;
-import com.google.devtools.build.lib.remote.RemoteExecutionCache;
 import com.google.devtools.build.lib.remote.Scrubber;
 import com.google.devtools.build.lib.remote.Scrubber.SpawnScrubber;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
@@ -93,7 +91,7 @@ public final class MerkleTreeComputer {
   @Nullable private static volatile Scrubber lastScrubber;
 
   private final DigestUtil digestUtil;
-  @Nullable private final RemoteExecutionCache remoteExecutionCache;
+  @Nullable private final SubTreeUploader remoteExecutionCache;
   private final String buildRequestId;
   private final String commandId;
 
@@ -102,12 +100,12 @@ public final class MerkleTreeComputer {
       Caffeine.newBuilder().executor(MERKLE_TREE_BUILD_POOL).buildAsync();
 
   public MerkleTreeComputer(
-      DigestUtil digestUtil, CombinedCache combinedCache, String buildRequestId, String commandId) {
+      DigestUtil digestUtil,
+      @Nullable SubTreeUploader remoteExecutionCache,
+      String buildRequestId,
+      String commandId) {
     this.digestUtil = digestUtil;
-    this.remoteExecutionCache =
-        combinedCache instanceof RemoteExecutionCache remoteExecutionCache
-            ? remoteExecutionCache
-            : null;
+    this.remoteExecutionCache = remoteExecutionCache;
     this.buildRequestId = buildRequestId;
     this.commandId = commandId;
     var emptyBlob = new byte[0];
@@ -609,6 +607,15 @@ public final class MerkleTreeComputer {
     }
   }
 
+  public interface SubTreeUploader {
+    void ensureBlobsPresent(
+        RemoteActionExecutionContext context,
+        MerkleTree merkleTree,
+        boolean force,
+        RemotePathResolver remotePathResolver)
+        throws IOException, InterruptedException;
+  }
+
   private void uploadSubTree(
       MerkleTree subTree,
       SubTreePolicy subTreePolicy,
@@ -618,12 +625,8 @@ public final class MerkleTreeComputer {
     if (remoteExecutionCache == null || subTreePolicy == SubTreePolicy.DISCARD) {
       return;
     }
-    remoteExecutionCache.ensureInputsPresent(
-        context,
-        subTree,
-        ImmutableMap.of(),
-        subTreePolicy == SubTreePolicy.FORCE_UPLOAD,
-        remotePathResolver);
+    remoteExecutionCache.ensureBlobsPresent(
+        context, subTree, subTreePolicy == SubTreePolicy.FORCE_UPLOAD, remotePathResolver);
   }
 
   private static Object inFlightCacheKeyFor(FileArtifactValue metadata, boolean isTool) {
