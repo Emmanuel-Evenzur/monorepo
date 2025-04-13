@@ -317,7 +317,7 @@ public final class MerkleTreeComputer {
         for (String dirToPop : fragmentToPop.splitToListOfSegments().reverse()) {
           byte[] directoryBlob = directoryStack.pop().build().toByteArray();
           Digest directoryBlobDigest = digestUtil.compute(directoryBlob);
-          if (subTreePolicy != SubTreePolicy.DISCARD) {
+          if (subTreePolicy != SubTreePolicy.DISCARD && directoryBlobDigest.getSizeBytes() != 0) {
             blobs.put(directoryBlobDigest, directoryBlob);
           }
           inputBytes += directoryBlobDigest.getSizeBytes();
@@ -410,7 +410,7 @@ public final class MerkleTreeComputer {
           } else {
             var digest = DigestUtil.buildDigest(metadata.getDigest(), metadata.getSize());
             addFile(currentDirectory, name, digest, nodeProperties);
-            if (subTreePolicy != SubTreePolicy.DISCARD) {
+            if (subTreePolicy != SubTreePolicy.DISCARD && digest.getSizeBytes() != 0) {
               blobs.put(digest, artifactPathResolver.toPath(fileOrSourceDirectory));
             }
             inputFiles++;
@@ -420,7 +420,7 @@ public final class MerkleTreeComputer {
         case VirtualActionInput virtualActionInput -> {
           var digest = digestUtil.compute(virtualActionInput);
           addFile(currentDirectory, name, digest, nodeProperties);
-          if (subTreePolicy != SubTreePolicy.DISCARD) {
+          if (subTreePolicy != SubTreePolicy.DISCARD && digest.getSizeBytes() != 0) {
             blobs.put(digest, virtualActionInput);
           }
           inputFiles++;
@@ -443,7 +443,7 @@ public final class MerkleTreeComputer {
           Path inputPath = artifactPathResolver.toPath(input);
           var digest = digestUtil.compute(inputPath);
           addFile(currentDirectory, name, digest, nodeProperties);
-          if (subTreePolicy != SubTreePolicy.DISCARD) {
+          if (subTreePolicy != SubTreePolicy.DISCARD && digest.getSizeBytes() != 0) {
             blobs.put(digest, inputPath);
           }
           inputFiles++;
