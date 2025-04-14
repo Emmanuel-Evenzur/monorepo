@@ -121,7 +121,6 @@ public final class MerkleTreeComputer {
 
   private record MerkleTreeRoot(Digest digest, long inputFiles, long inputBytes) {}
 
-  // TODO: Drop blobs after they have been uploaded.
   public static final class MerkleTree {
     private final MerkleTreeRoot root;
     private final ImmutableMap<Digest, Object> blobs;
