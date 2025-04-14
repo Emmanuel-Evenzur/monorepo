@@ -30,6 +30,7 @@ import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.FileStateType;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
+import com.google.devtools.build.lib.actions.LostInputsExecException;
 import com.google.devtools.build.lib.actions.PathMapper;
 import com.google.devtools.build.lib.actions.RunfilesArtifactValue;
 import com.google.devtools.build.lib.actions.Spawn;
@@ -39,6 +40,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.remote.Scrubber;
 import com.google.devtools.build.lib.remote.Scrubber.SpawnScrubber;
+import com.google.devtools.build.lib.remote.common.BulkTransferException;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext.CachePolicy;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
@@ -181,7 +183,7 @@ public final class MerkleTreeComputer {
       SpawnExecutionContext spawnExecutionContext,
       RemotePathResolver remotePathResolver,
       SubTreePolicy subTreePolicy)
-      throws IOException, InterruptedException {
+      throws IOException, InterruptedException, LostInputsExecException {
     if (!Objects.equals(scrubber, lastScrubber)) {
       persistentToolSubTreeCache.invalidateAll();
       persistentNonToolSubTreeCache.invalidateAll();
@@ -223,18 +225,25 @@ public final class MerkleTreeComputer {
             metadata,
             CachePolicy.REMOTE_CACHE_ONLY,
             CachePolicy.NO_CACHE);
-    return build(
-        Lists.transform(
-            allInputs,
-            input ->
-                Map.entry(getOutputPath(input, remotePathResolver, spawn.getPathMapper()), input)),
-        isToolInput,
-        scrubber != null ? scrubber.forSpawn(spawn) : null,
-        spawnExecutionContext.getInputMetadataProvider(),
-        spawnExecutionContext.getPathResolver(),
-        remoteActionExecutionContext,
-        remotePathResolver,
-        subTreePolicy);
+    try {
+      return build(
+          Lists.transform(
+              allInputs,
+              input ->
+                  Map.entry(
+                      getOutputPath(input, remotePathResolver, spawn.getPathMapper()), input)),
+          isToolInput,
+          scrubber != null ? scrubber.forSpawn(spawn) : null,
+          spawnExecutionContext.getInputMetadataProvider(),
+          spawnExecutionContext.getPathResolver(),
+          remoteActionExecutionContext,
+          remotePathResolver,
+          subTreePolicy);
+    } catch (BulkTransferException e) {
+      e.getLostArtifacts(spawnExecutionContext.getInputMetadataProvider()::getInput)
+          .throwIfNotEmpty();
+      throw e;
+    }
   }
 
   // TODO: This may not be the correct path to test isToolInput on with the sibling repository
