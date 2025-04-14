@@ -134,12 +134,8 @@ public class RemoteExecutionCache extends CombinedCache {
       boolean force,
       @Nullable RemotePathResolver remotePathResolver)
       throws IOException, InterruptedException {
-    Iterable<Digest> merkleTreeAllDigests;
-    try (SilentCloseable s = Profiler.instance().profile("merkleTree.getAllDigests()")) {
-      merkleTreeAllDigests = merkleTree.allDigests();
-    }
-    Iterable<Digest> allDigests = Iterables.concat(merkleTreeAllDigests, additionalInputs.keySet());
-
+    Iterable<Digest> allDigests =
+        Iterables.concat(merkleTree.allDigests(), additionalInputs.keySet());
     if (Iterables.isEmpty(allDigests)) {
       return;
     }
