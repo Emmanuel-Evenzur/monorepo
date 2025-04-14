@@ -105,7 +105,9 @@ public class CombinedCacheTest {
   ArtifactRoot artifactRoot;
   private final DigestUtil digestUtil =
       new DigestUtil(SyscallCache.NO_CACHE, DigestHashFunction.SHA256);
-  private final MerkleTreeComputer merkleTreeComputer = new MerkleTreeComputer(digestUtil);
+  private final MerkleTreeComputer merkleTreeComputer =
+      new MerkleTreeComputer(
+          digestUtil, /* remoteExecutionCache= */ null, "buildRequestId", "commandId");
   private FakeActionInputFileCache fakeFileCache;
 
   private ListeningScheduledExecutorService retryService;

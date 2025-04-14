@@ -76,6 +76,7 @@ import com.google.devtools.build.lib.remote.common.RemoteCacheClient.ActionKey;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer;
 import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer.MerkleTree;
+import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer.SubTreeUploader;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.remote.util.TestUtils;
@@ -289,8 +290,12 @@ public class GrpcCacheClientTest {
     PathFragment execPath = PathFragment.create("my/exec/path");
     VirtualActionInput virtualActionInput =
         ActionsTestUtil.createVirtualActionInput(execPath, "hello");
+    SubTreeUploader uploader =
+        (context, merkleTree, force, remotePathResolver) ->
+            client.ensureInputsPresent(
+                context, merkleTree, ImmutableMap.of(), force, remotePathResolver);
     MerkleTree merkleTree =
-        new MerkleTreeComputer(DIGEST_UTIL, client)
+        new MerkleTreeComputer(DIGEST_UTIL, uploader, "buildRequestId", "commandId")
             .buildForSpawn(
                 new SpawnBuilder("unused")
                     .withInputs(virtualActionInput)
