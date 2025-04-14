@@ -370,7 +370,7 @@ public final class MerkleTreeComputer {
 
       switch (input) {
         case Artifact treeArtifact when treeArtifact.isTreeArtifact() -> {
-          var subTree =
+          var subTreeRoot =
               computeForTreeArtifactIfAbsent(
                   metadataProvider.getTreeMetadata(treeArtifact),
                   path,
@@ -380,9 +380,9 @@ public final class MerkleTreeComputer {
                   remoteActionExecutionContext,
                   remotePathResolver,
                   subTreePolicy);
-          currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTree.digest());
-          inputFiles += subTree.inputFiles();
-          inputBytes += subTree.inputBytes();
+          currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTreeRoot.digest());
+          inputFiles += subTreeRoot.inputFiles();
+          inputBytes += subTreeRoot.inputBytes();
         }
         case Artifact runfilesTreeArtifact when runfilesTreeArtifact.isRunfilesTree() -> {
           var subTreeRoot =
@@ -418,7 +418,7 @@ public final class MerkleTreeComputer {
                   "missing metadata: %s",
                   fileOrSourceDirectory);
           if (metadata.getType() == FileStateType.DIRECTORY) {
-            var subTree =
+            var subTreeRoot =
                 computeIfAbsent(
                     metadata,
                     () ->
@@ -430,9 +430,9 @@ public final class MerkleTreeComputer {
                     remoteActionExecutionContext,
                     remotePathResolver,
                     subTreePolicy);
-            currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTree.digest());
-            inputFiles += subTree.inputFiles();
-            inputBytes += subTree.inputBytes();
+            currentDirectory.addDirectoriesBuilder().setName(name).setDigest(subTreeRoot.digest());
+            inputFiles += subTreeRoot.inputFiles();
+            inputBytes += subTreeRoot.inputBytes();
           } else {
             var digest = DigestUtil.buildDigest(metadata.getDigest(), metadata.getSize());
             addFile(currentDirectory, name, digest, nodeProperties);
@@ -452,12 +452,11 @@ public final class MerkleTreeComputer {
           inputFiles++;
           inputBytes += digest.getSizeBytes();
         }
-        case InputDirectory ignored -> {
-          currentDirectory
-              .addDirectoriesBuilder()
-              .setName(name)
-              .setDigest(digestUtil.emptyDigest());
-        }
+        case InputDirectory ignored ->
+            currentDirectory
+                .addDirectoriesBuilder()
+                .setName(name)
+                .setDigest(digestUtil.emptyDigest());
         case null -> {
           // This is a sentinel value for an empty file.
           addFile(currentDirectory, name, digestUtil.emptyDigest(), nodeProperties);
