@@ -5,6 +5,7 @@ import static com.google.common.base.Predicates.alwaysFalse;
 import static com.google.common.base.Predicates.alwaysTrue;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.devtools.build.lib.util.StringEncoding.internalToUnicode;
+import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.supplyAsync;
 
 import build.bazel.remote.execution.v2.Digest;
@@ -69,6 +70,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Predicate;
 import javax.annotation.Nullable;
 
@@ -549,22 +551,35 @@ public final class MerkleTreeComputer {
       SubTreePolicy subTreePolicy)
       throws IOException, InterruptedException {
     var persistentCache = isTool ? persistentToolSubTreeCache : persistentNonToolSubTreeCache;
-    try {
-      var inFlightCacheKey = inFlightCacheKeyFor(metadata, isTool);
-      if (subTreePolicy == SubTreePolicy.FORCE_UPLOAD) {
-        inFlightSubTreeCache.synchronous().invalidate(inFlightCacheKey);
+    if (subTreePolicy == SubTreePolicy.FORCE_UPLOAD) {
+      persistentCache.invalidate(metadata);
+    } else {
+      var cachedRoot = persistentCache.getIfPresent(metadata);
+      if (cachedRoot != null) {
+        return cachedRoot;
       }
-      return inFlightSubTreeCache
-          .get(
-              inFlightCacheKey,
-              (key, buildExecutor) ->
-                  supplyAsync(
+    }
+    var inFlightCacheKey = inFlightCacheKeyFor(metadata, isTool);
+    if (subTreePolicy == SubTreePolicy.FORCE_UPLOAD) {
+      inFlightSubTreeCache.synchronous().invalidate(inFlightCacheKey);
+    }
+    var future =
+        inFlightSubTreeCache
+            .get(
+                inFlightCacheKey,
+                (key, buildExecutor) -> {
+                  // There is a window in which a concurrent call may have removed the
+                  // in-flight cache entry while this one had already passed the check
+                  // above. Recheck the persistent cache to avoid unnecessary work.
+                  var cachedRoot = persistentCache.getIfPresent(metadata);
+                  if (cachedRoot != null) {
+                    return completedFuture(cachedRoot);
+                  }
+                  return supplyAsync(
                           () -> {
                             try {
                               // Subtrees either consist entirely of tool inputs or don't contain
                               // any. The same applies to scrubbed inputs.
-                              // TODO: Upload after building and then invalidate the in-flight cache
-                              //  entry.
                               return build(
                                   sortedInputsSupplier.compute(),
                                   isTool ? alwaysTrue() : alwaysFalse(),
@@ -584,26 +599,38 @@ public final class MerkleTreeComputer {
                       .thenApplyAsync(
                           merkleTree -> {
                             try {
-                              uploadSubTree(
-                                  merkleTree,
-                                  subTreePolicy,
-                                  remoteActionExecutionContext,
-                                  remotePathResolver);
+                              if (remoteExecutionCache != null
+                                  && subTreePolicy != SubTreePolicy.DISCARD) {
+                                remoteExecutionCache.ensureBlobsPresent(
+                                    remoteActionExecutionContext,
+                                    merkleTree,
+                                    subTreePolicy == SubTreePolicy.FORCE_UPLOAD,
+                                    remotePathResolver);
+                              }
                             } catch (IOException e) {
                               throw new UncheckedIOException(e);
                             } catch (InterruptedException e) {
                               throw new UncheckedIOException(new InterruptedIOException());
                             }
-                            persistentCache.put(metadata, merkleTree.root);
                             return merkleTree.root;
                           },
-                          MERKLE_TREE_UPLOAD_POOL))
-          .thenApply(
-              merkleTree -> {
-                inFlightSubTreeCache.synchronous().invalidate(inFlightCacheKey);
-                return merkleTree;
-              })
-          .get();
+                          MERKLE_TREE_UPLOAD_POOL);
+                })
+            // Move the computed root to the persistent cache so that it can be reused by subsequent
+            // builds as well as to keep memory usage low: the in-flight cache retains full trees,
+            // the persistent cache only
+            .thenApply(
+                root -> {
+                  persistentCache.put(metadata, root);
+                  inFlightSubTreeCache.synchronous().invalidate(inFlightCacheKey);
+                  return root;
+                });
+    return getFromFuture(future);
+  }
+
+  private static <T> T getFromFuture(Future<T> future) throws IOException, InterruptedException {
+    try {
+      return future.get();
     } catch (ExecutionException e) {
       if (e.getCause() instanceof UncheckedIOException uncheckedIOException) {
         if (uncheckedIOException.getCause() instanceof InterruptedIOException) {
@@ -623,19 +650,6 @@ public final class MerkleTreeComputer {
         boolean force,
         RemotePathResolver remotePathResolver)
         throws IOException, InterruptedException;
-  }
-
-  private void uploadSubTree(
-      MerkleTree subTree,
-      SubTreePolicy subTreePolicy,
-      RemoteActionExecutionContext context,
-      RemotePathResolver remotePathResolver)
-      throws IOException, InterruptedException {
-    if (remoteExecutionCache == null || subTreePolicy == SubTreePolicy.DISCARD) {
-      return;
-    }
-    remoteExecutionCache.ensureBlobsPresent(
-        context, subTree, subTreePolicy == SubTreePolicy.FORCE_UPLOAD, remotePathResolver);
   }
 
   private static Object inFlightCacheKeyFor(FileArtifactValue metadata, boolean isTool) {
