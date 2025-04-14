@@ -29,6 +29,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.GoogleLogger;
@@ -43,6 +44,7 @@ import com.google.devtools.build.lib.remote.common.RemoteCacheClient.Blob;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.disk.DiskCacheClient;
 import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer;
+import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer.SubTreeUploader;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.remote.util.RxUtils.TransferResult;
@@ -59,6 +61,7 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.core.SingleEmitter;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.subjects.AsyncSubject;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -67,7 +70,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
 /** A {@link CombinedCache} with additional functionality needed for remote execution. */
-public class RemoteExecutionCache extends CombinedCache {
+public class RemoteExecutionCache extends CombinedCache implements SubTreeUploader {
 
   private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
 
@@ -171,6 +174,16 @@ public class RemoteExecutionCache extends CombinedCache {
     }
   }
 
+  @Override
+  public void ensureBlobsPresent(
+      RemoteActionExecutionContext context,
+      MerkleTreeComputer.MerkleTree merkleTree,
+      boolean force,
+      RemotePathResolver remotePathResolver)
+      throws IOException, InterruptedException {
+    ensureInputsPresent(context, merkleTree, ImmutableMap.of(), force, remotePathResolver);
+  }
+
   private static final class VirtualActionInputBlob implements Blob {
     private VirtualActionInput virtualActionInput;
     // Can be large compared to the retained size of the VirtualActionInput and thus shouldn't be
@@ -210,12 +223,15 @@ public class RemoteExecutionCache extends CombinedCache {
     MerkleTreeComputer.BlobUploader blobUploader =
         new MerkleTreeComputer.BlobUploader() {
           @Override
-          public ListenableFuture<Void> upload(Digest digest, byte[] data) {
-            return remoteCacheClient.uploadBlob(context, digest, ByteString.copyFrom(data));
+          public ListenableFuture<Void> upload(
+              RemoteActionExecutionContext context, Digest digest, byte[] data) {
+            return remoteCacheClient.uploadBlob(
+                context, digest, () -> new ByteArrayInputStream(data));
           }
 
           @Override
-          public ListenableFuture<Void> upload(Digest digest, Path path) {
+          public ListenableFuture<Void> upload(
+              RemoteActionExecutionContext context, Digest digest, Path path) {
             try {
               if (remotePathChecker.isRemote(context, path)) {
                 // If we get here, the remote input was determined to exist in the remote or disk
@@ -239,12 +255,14 @@ public class RemoteExecutionCache extends CombinedCache {
 
           @Override
           public ListenableFuture<Void> upload(
-              Digest digest, VirtualActionInput virtualActionInput) {
+              RemoteActionExecutionContext context,
+              Digest digest,
+              VirtualActionInput virtualActionInput) {
             return remoteCacheClient.uploadBlob(
                 context, digest, new VirtualActionInputBlob(virtualActionInput));
           }
         };
-    var upload = merkleTree.upload(blobUploader, digest);
+    var upload = merkleTree.upload(context, blobUploader, digest);
     if (upload.isPresent()) {
       return upload.get();
     }

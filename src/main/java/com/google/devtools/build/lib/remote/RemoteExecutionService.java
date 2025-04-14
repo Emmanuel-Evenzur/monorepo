@@ -234,17 +234,14 @@ public class RemoteExecutionService {
     this.remoteOptions = remoteOptions;
     this.combinedCache = combinedCache;
     this.remoteExecutor = remoteExecutor;
-    MerkleTreeComputer.SubTreeUploader subTreeUploader;
-    if (combinedCache instanceof RemoteExecutionCache remoteExecutionCache) {
-      subTreeUploader =
-          (context, merkleTree, force, remotePathResolver1) ->
-              remoteExecutionCache.ensureInputsPresent(
-                  context, merkleTree, ImmutableMap.of(), force, remotePathResolver1);
-    } else {
-      subTreeUploader = null;
-    }
     this.merkleTreeComputer =
-        new MerkleTreeComputer(digestUtil, subTreeUploader, buildRequestId, commandId);
+        new MerkleTreeComputer(
+            digestUtil,
+            combinedCache instanceof RemoteExecutionCache remoteExecutionCache
+                ? remoteExecutionCache
+                : null,
+            buildRequestId,
+            commandId);
 
     Caffeine<Object, Object> merkleTreeCacheBuilder = Caffeine.newBuilder().softValues();
     // remoteMerkleTreesCacheSize = 0 means limitless.

@@ -151,12 +151,13 @@ public final class MerkleTreeComputer {
       return blobs;
     }
 
-    public Optional<ListenableFuture<Void>> upload(BlobUploader uploader, Digest digest) {
+    public Optional<ListenableFuture<Void>> upload(
+        RemoteActionExecutionContext context, BlobUploader uploader, Digest digest) {
       return switch (blobs.get(digest)) {
-        case byte[] data -> Optional.of(uploader.upload(digest, data));
-        case Path path -> Optional.of(uploader.upload(digest, path));
+        case byte[] data -> Optional.of(uploader.upload(context, digest, data));
+        case Path path -> Optional.of(uploader.upload(context, digest, path));
         case VirtualActionInput virtualActionInput ->
-            Optional.of(uploader.upload(digest, virtualActionInput));
+            Optional.of(uploader.upload(context, digest, virtualActionInput));
         case null -> Optional.empty();
         default -> throw new IllegalStateException("Unexpected blob type: " + blobs.get(digest));
       };
@@ -164,11 +165,12 @@ public final class MerkleTreeComputer {
   }
 
   public interface BlobUploader {
-    ListenableFuture<Void> upload(Digest digest, byte[] data);
+    ListenableFuture<Void> upload(RemoteActionExecutionContext context, Digest digest, byte[] data);
 
-    ListenableFuture<Void> upload(Digest digest, Path file);
+    ListenableFuture<Void> upload(RemoteActionExecutionContext context, Digest digest, Path file);
 
-    ListenableFuture<Void> upload(Digest digest, VirtualActionInput virtualActionInput);
+    ListenableFuture<Void> upload(
+        RemoteActionExecutionContext context, Digest digest, VirtualActionInput virtualActionInput);
   }
 
   public enum SubTreePolicy {
