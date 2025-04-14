@@ -51,6 +51,7 @@ import com.google.bytestream.ByteStreamProto.ReadResponse;
 import com.google.bytestream.ByteStreamProto.WriteRequest;
 import com.google.bytestream.ByteStreamProto.WriteResponse;
 import com.google.common.base.Predicates;
+import com.google.common.collect.ImmutableClassToInstanceMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -78,6 +79,7 @@ import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer;
 import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer.MerkleTree;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
+import com.google.devtools.build.lib.remote.util.FakeSpawnExecutionContext;
 import com.google.devtools.build.lib.remote.util.TestUtils;
 import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
 import com.google.devtools.build.lib.testutil.Scratch;
@@ -289,16 +291,23 @@ public class GrpcCacheClientTest {
     PathFragment execPath = PathFragment.create("my/exec/path");
     VirtualActionInput virtualActionInput =
         ActionsTestUtil.createVirtualActionInput(execPath, "hello");
+    Spawn spawn =
+        new SpawnBuilder("unused").withInputs(virtualActionInput).withOutputs("foo").build();
+    SpawnExecutionContext spawnExecutionContext =
+        new FakeSpawnExecutionContext(
+            spawn,
+            /* inputMetadataProvider= */ null,
+            execRoot,
+            /* outErr= */ null,
+            ImmutableClassToInstanceMap.of(),
+            /* actionFileSystem= */ null);
     MerkleTree merkleTree =
         new MerkleTreeComputer(DIGEST_UTIL, client, "buildRequestId", "commandId")
             .buildForSpawn(
-                new SpawnBuilder("unused")
-                    .withInputs(virtualActionInput)
-                    .withOutputs("foo")
-                    .build(),
+                spawn,
                 Predicates.alwaysFalse(),
                 /* spawnScrubber= */ null,
-                null,
+                spawnExecutionContext,
                 remotePathResolver,
                 MerkleTreeComputer.SubTreePolicy.UPLOAD);
     Digest digest = DIGEST_UTIL.compute(virtualActionInput.getBytes().toByteArray());
