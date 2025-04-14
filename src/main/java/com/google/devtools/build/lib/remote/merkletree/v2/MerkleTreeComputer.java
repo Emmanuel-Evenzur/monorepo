@@ -95,7 +95,7 @@ public final class MerkleTreeComputer {
   @Nullable private static volatile Scrubber lastScrubber;
 
   private final DigestUtil digestUtil;
-  @Nullable private final SubTreeUploader remoteExecutionCache;
+  @Nullable private final MerkleTreeUploader remoteExecutionCache;
   private final String buildRequestId;
   private final String commandId;
 
@@ -105,7 +105,7 @@ public final class MerkleTreeComputer {
 
   public MerkleTreeComputer(
       DigestUtil digestUtil,
-      @Nullable SubTreeUploader remoteExecutionCache,
+      @Nullable MerkleTreeUploader remoteExecutionCache,
       String buildRequestId,
       String commandId) {
     this.digestUtil = digestUtil;
@@ -152,10 +152,13 @@ public final class MerkleTreeComputer {
     }
 
     public Optional<ListenableFuture<Void>> upload(
-        RemoteActionExecutionContext context, BlobUploader uploader, Digest digest) {
+        MerkleTreeUploader uploader,
+        RemoteActionExecutionContext context,
+        RemotePathResolver remotePathResolver,
+        Digest digest) {
       return switch (blobs.get(digest)) {
         case byte[] data -> Optional.of(uploader.upload(context, digest, data));
-        case Path path -> Optional.of(uploader.upload(context, digest, path));
+        case Path path -> Optional.of(uploader.upload(context, remotePathResolver, digest, path));
         case VirtualActionInput virtualActionInput ->
             Optional.of(uploader.upload(context, digest, virtualActionInput));
         case null -> Optional.empty();
@@ -164,13 +167,24 @@ public final class MerkleTreeComputer {
     }
   }
 
-  public interface BlobUploader {
+  public interface MerkleTreeUploader {
     ListenableFuture<Void> upload(RemoteActionExecutionContext context, Digest digest, byte[] data);
 
-    ListenableFuture<Void> upload(RemoteActionExecutionContext context, Digest digest, Path file);
+    ListenableFuture<Void> upload(
+        RemoteActionExecutionContext context,
+        RemotePathResolver remotePathResolver,
+        Digest digest,
+        Path path);
 
     ListenableFuture<Void> upload(
         RemoteActionExecutionContext context, Digest digest, VirtualActionInput virtualActionInput);
+
+    void ensureInputsPresent(
+        RemoteActionExecutionContext context,
+        MerkleTree merkleTree,
+        boolean force,
+        RemotePathResolver remotePathResolver)
+        throws IOException, InterruptedException;
   }
 
   public enum SubTreePolicy {
@@ -602,7 +616,7 @@ public final class MerkleTreeComputer {
                             try {
                               if (remoteExecutionCache != null
                                   && subTreePolicy != SubTreePolicy.DISCARD) {
-                                remoteExecutionCache.ensureBlobsPresent(
+                                remoteExecutionCache.ensureInputsPresent(
                                     remoteActionExecutionContext,
                                     merkleTree,
                                     subTreePolicy == SubTreePolicy.FORCE_UPLOAD,
@@ -642,15 +656,6 @@ public final class MerkleTreeComputer {
       Throwables.throwIfUnchecked(e.getCause());
       throw new IllegalStateException(e);
     }
-  }
-
-  public interface SubTreeUploader {
-    void ensureBlobsPresent(
-        RemoteActionExecutionContext context,
-        MerkleTree merkleTree,
-        boolean force,
-        RemotePathResolver remotePathResolver)
-        throws IOException, InterruptedException;
   }
 
   private static Object inFlightCacheKeyFor(FileArtifactValue metadata, boolean isTool) {

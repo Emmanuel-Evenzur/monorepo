@@ -44,7 +44,7 @@ import com.google.devtools.build.lib.remote.common.RemoteCacheClient.Blob;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.disk.DiskCacheClient;
 import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer;
-import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer.SubTreeUploader;
+import com.google.devtools.build.lib.remote.merkletree.v2.MerkleTreeComputer.MerkleTreeUploader;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.remote.util.RxUtils.TransferResult;
@@ -70,7 +70,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
 /** A {@link CombinedCache} with additional functionality needed for remote execution. */
-public class RemoteExecutionCache extends CombinedCache implements SubTreeUploader {
+public class RemoteExecutionCache extends CombinedCache implements MerkleTreeUploader {
 
   private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
 
@@ -175,13 +175,53 @@ public class RemoteExecutionCache extends CombinedCache implements SubTreeUpload
   }
 
   @Override
-  public void ensureBlobsPresent(
+  public void ensureInputsPresent(
       RemoteActionExecutionContext context,
       MerkleTreeComputer.MerkleTree merkleTree,
       boolean force,
       RemotePathResolver remotePathResolver)
       throws IOException, InterruptedException {
     ensureInputsPresent(context, merkleTree, ImmutableMap.of(), force, remotePathResolver);
+  }
+
+  @Override
+  public ListenableFuture<Void> upload(
+      RemoteActionExecutionContext context, Digest digest, byte[] data) {
+    return remoteCacheClient.uploadBlob(context, digest, () -> new ByteArrayInputStream(data));
+  }
+
+  @Override
+  public ListenableFuture<Void> upload(
+      RemoteActionExecutionContext context,
+      RemotePathResolver remotePathResolver,
+      Digest digest,
+      Path path) {
+    try {
+      if (remotePathChecker.isRemote(context, path)) {
+        // If we get here, the remote input was determined to exist in the remote or disk
+        // cache at some point before action execution, but reported to be missing when
+        // querying the remote for missing action inputs; possibly because it was evicted in
+        // the interim.
+        if (remotePathResolver != null) {
+          throw new CacheNotFoundException(
+              digest, remotePathResolver.localPathToExecPath(path.asFragment()));
+        } else {
+          // This path should only be taken for RemoteRepositoryRemoteExecutor, which has no
+          // way to handle lost inputs.
+          throw new CacheNotFoundException(digest, path.getPathString());
+        }
+      }
+    } catch (IOException e) {
+      return immediateFailedFuture(e);
+    }
+    return remoteCacheClient.uploadFile(context, digest, path);
+  }
+
+  @Override
+  public ListenableFuture<Void> upload(
+      RemoteActionExecutionContext context, Digest digest, VirtualActionInput virtualActionInput) {
+    return remoteCacheClient.uploadBlob(
+        context, digest, new VirtualActionInputBlob(virtualActionInput));
   }
 
   private static final class VirtualActionInputBlob implements Blob {
@@ -219,50 +259,7 @@ public class RemoteExecutionCache extends CombinedCache implements SubTreeUpload
       MerkleTreeComputer.MerkleTree merkleTree,
       Map<Digest, Message> additionalInputs,
       @Nullable RemotePathResolver remotePathResolver) {
-    // TODO: Move this into context.
-    MerkleTreeComputer.BlobUploader blobUploader =
-        new MerkleTreeComputer.BlobUploader() {
-          @Override
-          public ListenableFuture<Void> upload(
-              RemoteActionExecutionContext context, Digest digest, byte[] data) {
-            return remoteCacheClient.uploadBlob(
-                context, digest, () -> new ByteArrayInputStream(data));
-          }
-
-          @Override
-          public ListenableFuture<Void> upload(
-              RemoteActionExecutionContext context, Digest digest, Path path) {
-            try {
-              if (remotePathChecker.isRemote(context, path)) {
-                // If we get here, the remote input was determined to exist in the remote or disk
-                // cache at some point before action execution, but reported to be missing when
-                // querying the remote for missing action inputs; possibly because it was evicted in
-                // the interim.
-                if (remotePathResolver != null) {
-                  throw new CacheNotFoundException(
-                      digest, remotePathResolver.localPathToExecPath(path.asFragment()));
-                } else {
-                  // This path should only be taken for RemoteRepositoryRemoteExecutor, which has no
-                  // way to handle lost inputs.
-                  throw new CacheNotFoundException(digest, path.getPathString());
-                }
-              }
-            } catch (IOException e) {
-              return immediateFailedFuture(e);
-            }
-            return remoteCacheClient.uploadFile(context, digest, path);
-          }
-
-          @Override
-          public ListenableFuture<Void> upload(
-              RemoteActionExecutionContext context,
-              Digest digest,
-              VirtualActionInput virtualActionInput) {
-            return remoteCacheClient.uploadBlob(
-                context, digest, new VirtualActionInputBlob(virtualActionInput));
-          }
-        };
-    var upload = merkleTree.upload(context, blobUploader, digest);
+    var upload = merkleTree.upload(this, context, remotePathResolver, digest);
     if (upload.isPresent()) {
       return upload.get();
     }
