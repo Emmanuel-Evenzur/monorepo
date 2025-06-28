@@ -605,11 +605,8 @@ public class CommonCommandOptions extends OptionsBase {
       help =
           """
           If true, repository rules and module extensions will only inherit <code>PATH</code>, \
-          <code>PATHEXT</code> (Windows), requests via <code>getenv</code> and <code>environ</code> \
-          declarations.
-          <br>
-          Use <code>--repo_env=NAME</code> to inherit additional environment variables and \
-          <code>--repo_env=NAME=VALUE</code> to set a static value.
+          <code>PATHEXT</code> (Windows) and environment variables explicitly specified by \
+          <code>--repo_env</code>.
           <br>
           Note that unless <code>--incompatible_repo_env_ignores_action_env</code> is true,
           <code>--action_env=NAME=VALUE</code> will also be included.

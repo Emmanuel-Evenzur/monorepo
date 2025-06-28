@@ -292,7 +292,7 @@ public class BazelRepositoryModule extends BlazeModule {
     } else {
       repoEnvironmentSupplier.set(env.getRepoEnv());
     }
-    clientEnvironmentSupplier.set(env.getClientEnv());
+    clientEnvironmentSupplier.set(env.getRepoEnv());
     PackageOptions pkgOptions = env.getOptions().getOptions(PackageOptions.class);
     isFetch.set(pkgOptions != null && pkgOptions.fetch);
 
