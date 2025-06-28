@@ -608,11 +608,11 @@ public class CommonCommandOptions extends OptionsBase {
           <code>PATHEXT</code> (Windows), requests via <code>getenv</code> and <code>environ</code> \
           declarations.
           <br>
-          <code>--action_env=NAME=VALUE</code> options will also no longer affect them\
-          (<code>--action_env=NAME</code> is already ignored).
-          <br>
           Use <code>--repo_env=NAME</code> to inherit additional environment variables and \
           <code>--repo_env=NAME=VALUE</code> to set a static value.
+          <br>
+          Note that unless <code>--incompatible_repo_env_ignores_action_env</code> is true,
+          <code>--action_env=NAME=VALUE</code> will also be included.
           """)
     public boolean useStrictRepoEnv;
 
