@@ -22,6 +22,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
+import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.Subscribe;
 import com.google.devtools.build.lib.actions.ActionOutputDirectoryHelper;
@@ -62,6 +63,7 @@ import com.google.devtools.build.lib.skyframe.WorkspaceInfoFromDiff;
 import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingEventListener;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.DetailedExitCode;
+import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.io.CommandExtensionReporter;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
@@ -333,6 +335,19 @@ public class CommandEnvironment {
                 : UUID.randomUUID().toString();
 
     this.repoEnv.putAll(clientEnv);
+
+    Set<String> defaultRepoEnvInherited = new TreeSet<>();
+    defaultRepoEnvInherited.add("PATH");
+    if (OS.getCurrent() == OS.WINDOWS) {
+      defaultRepoEnvInherited.add("PATHEXT");
+    }
+    for (String name : defaultRepoEnvInherited) {
+      String value = clientEnv.get(name);
+      if (value != null) {
+        this.repoEnvFromOptions.put(name, value);
+      }
+    }
+
     // TODO: This only needs to check for loads() rather than analyzes() due to
     //  the effect of --action_env on the repository env. Revert back to
     //  analyzes() when --action_env no longer affects it.
@@ -347,6 +362,9 @@ public class CommandEnvironment {
           visibleActionEnv.remove(entry.getKey());
           if (!options.getOptions(CommonCommandOptions.class).repoEnvIgnoresActionEnv) {
             repoEnv.put(entry.getKey(), entry.getValue());
+          }
+          if (!options.getOptions(CommonCommandOptions.class).useStrictRepoEnv) {
+            repoEnvFromOptions.put(entry.getKey(), entry.getValue());
           }
         }
       }
@@ -952,6 +970,11 @@ public class CommandEnvironment {
    */
   public Map<String, String> getRepoEnv() {
     return Collections.unmodifiableMap(repoEnv);
+  }
+
+  /** Returns the repository environment created from `--action_env` and `--repo_env` */
+  public Map<String, String> getRepoEnvFromOptions() {
+    return Collections.unmodifiableMap(repoEnvFromOptions);
   }
 
   /** Returns the file cache to use during this build. */
