@@ -178,40 +178,32 @@ public abstract class RepositoryFunction {
       Rule rule, Path outputDirectory, BlazeDirectories directories, Environment env, SkyKey key)
       throws InterruptedException, RepositoryFunctionException;
 
+  /** Whether the fetched repo contents are reproducible, hence cacheable. */
+  public enum Reproducibility {
+    YES,
+    NO
+  }
+
   /**
    * The result of the {@link #fetch} method.
    *
-   * @param repoBuilder A builder for the eventual {@link RepositoryDirectoryValue} with necessary
-   *     fields set.
    * @param recordedInputValues Any recorded inputs (and their values) encountered during the fetch
    *     of the repo. Changes to these inputs will result in the repo being refetched in the future.
    *     The {@link #isAnyRecordedInputOutdated} method is responsible for checking the value added
    *     to that map when checking the content of a marker file. Not an ImmutableMap, because
    *     regrettably the values can be null sometimes.
+   * @param reproducible Whether the fetched repo contents are reproducible, hence cacheable.
    */
   public record FetchResult(
-      RepositoryDirectoryValue.Builder repoBuilder,
-      Map<? extends RepoRecordedInput, String> recordedInputValues) {}
+      Map<? extends RepoRecordedInput, String> recordedInputValues, Reproducibility reproducible) {}
 
-  protected static void ensureNativeRepoRuleEnabled(Rule rule, Environment env, String replacement)
-      throws RepositoryFunctionException, InterruptedException {
-    if (!isWorkspaceRepo(rule)) {
-      // If this native repo rule is used in a Bzlmod context, always allow it. This is because
-      // we're still using the native repo rule `local_config_platform` for the builtin module with
-      // the same name. We should just get rid of that.
-      return;
-    }
-    if (!RepositoryDelegatorFunction.DISABLE_NATIVE_REPO_RULES.get(env)) {
-      return;
-    }
-    throw new RepositoryFunctionException(
-        Starlark.errorf(
-            "Native repo rule %s is disabled since the flag "
-                + "--incompatible_disable_native_repo_rules is set. Native repo rules are "
-                + "deprecated; please migrate to their Starlark counterparts. For %s, please use "
-                + "%s.",
-            rule.getRuleClass(), rule.getRuleClass(), replacement),
-        Transience.PERSISTENT);
+  /**
+   * We sometimes get to the point before fetching a repo when we have <em>just</em> fetched it,
+   * particularly because of Skyframe restarts very late into RepositoryDelegatorFunction. In that
+   * case, this method can be used to report that fact.
+   */
+  public boolean wasJustFetched(Environment env) {
+    return false;
   }
 
   /**
@@ -288,8 +280,7 @@ public abstract class RepositoryFunction {
     return false;
   }
 
-  protected static RepositoryDirectoryValue.Builder writeFile(
-      Path repositoryDirectory, String filename, String contents)
+  protected static void writeFile(Path repositoryDirectory, String filename, String contents)
       throws RepositoryFunctionException {
     Path filePath = repositoryDirectory.getRelative(filename);
     try {
@@ -303,13 +294,6 @@ public abstract class RepositoryFunction {
     } catch (IOException e) {
       throw new RepositoryFunctionException(e, Transience.TRANSIENT);
     }
-
-    return RepositoryDirectoryValue.builder().setPath(repositoryDirectory);
-  }
-
-  protected static RepositoryDirectoryValue.Builder writeBuildFile(
-      Path repositoryDirectory, String contents) throws RepositoryFunctionException {
-    return writeFile(repositoryDirectory, "BUILD.bazel", contents);
   }
 
   protected static String getPathAttr(Rule rule) throws RepositoryFunctionException {

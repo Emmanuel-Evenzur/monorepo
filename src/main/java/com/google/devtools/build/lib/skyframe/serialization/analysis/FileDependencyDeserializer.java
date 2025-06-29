@@ -26,6 +26,7 @@ import static com.google.protobuf.ExtensionRegistry.getEmptyRegistry;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.luben.zstd.ZstdInputStream;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.util.concurrent.AsyncFunction;
@@ -46,6 +47,7 @@ import com.google.devtools.build.lib.versioning.LongVersionGetter;
 import com.google.devtools.build.lib.vfs.OsPathPolicy;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.function.BiConsumer;
 import javax.annotation.Nullable;
@@ -259,6 +261,10 @@ final class FileDependencyDeserializer {
     @Override
     public ListenableFuture<FileDependencies> apply(byte[] bytes)
         throws InvalidProtocolBufferException {
+      if (bytes == null) {
+        return immediateFuture(FileDependencies.newMissingInstance());
+      }
+
       var data = FileInvalidationData.parseFrom(bytes, getEmptyRegistry());
       if (data.hasOverflowKey() && !data.getOverflowKey().equals(key)) {
         return immediateFailedFuture(
@@ -483,6 +489,10 @@ final class FileDependencyDeserializer {
     @Override
     public ListenableFuture<ListingDependencies> apply(byte[] bytes)
         throws InvalidProtocolBufferException {
+      if (bytes == null) {
+        return immediateFuture(ListingDependencies.newMissingInstance());
+      }
+
       var data = DirectoryListingInvalidationData.parseFrom(bytes, getEmptyRegistry());
       if (data.hasOverflowKey() && !data.getOverflowKey().equals(key)) {
         return immediateFailedFuture(
@@ -497,7 +507,7 @@ final class FileDependencyDeserializer {
 
       String path = key.substring(pathBegin);
       if (path.isEmpty()) {
-        return immediateFuture(new ListingDependencies(ROOT_FILE));
+        return immediateFuture(ListingDependencies.from(ROOT_FILE));
       }
 
       String fileKey =
@@ -507,9 +517,9 @@ final class FileDependencyDeserializer {
               FILE_KEY_DELIMITER);
       switch (getFileDependencies(fileKey)) {
         case FileDependencies dependencies:
-          return immediateFuture(new ListingDependencies(dependencies));
+          return immediateFuture(ListingDependencies.from(dependencies));
         case FutureFileDependencies future:
-          return Futures.transform(future, ListingDependencies::new, directExecutor());
+          return Futures.transform(future, ListingDependencies::from, directExecutor());
       }
     }
   }
@@ -527,8 +537,20 @@ final class FileDependencyDeserializer {
      */
     @Override
     public ListenableFuture<NestedDependencies> apply(byte[] bytes) {
+      if (bytes == null) {
+        return immediateFuture(NestedDependencies.newMissingInstance());
+      }
+
       try {
-        var codedIn = CodedInputStream.newInstance(bytes);
+        boolean usesZstdCompression = MagicBytes.hasMagicBytes(bytes);
+        CodedInputStream codedIn;
+        if (usesZstdCompression) {
+          ByteArrayInputStream byteArrayInputStream =
+              new ByteArrayInputStream(bytes, 2, bytes.length - 2);
+          codedIn = CodedInputStream.newInstance(new ZstdInputStream(byteArrayInputStream));
+        } else {
+          codedIn = CodedInputStream.newInstance(bytes);
+        }
         int nestedCount = codedIn.readInt32();
         int fileCount = codedIn.readInt32();
         int listingCount = codedIn.readInt32();
@@ -595,7 +617,8 @@ final class FileDependencyDeserializer {
         countdown.notifyInitializationDone();
         return countdown;
       } catch (IOException e) {
-        return immediateFailedFuture(e);
+        return immediateFailedFuture(
+            new SerializationException("Error deserializing nested node", e));
       }
     }
   }
@@ -638,7 +661,7 @@ final class FileDependencyDeserializer {
 
     @Override
     protected NestedDependencies getValue() {
-      return new NestedDependencies(elements, sources);
+      return NestedDependencies.from(elements, sources);
     }
   }
 

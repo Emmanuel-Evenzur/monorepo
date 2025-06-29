@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright 2023 The Bazel Authors. All rights reserved.
 #
@@ -162,14 +162,9 @@ function test_path_stripping_singleplex_worker() {
 }
 
 function test_path_stripping_multiplex_worker() {
-  if is_windows; then
-    echo "Skipping test_path_stripping_multiplex_worker on Windows as it requires sandboxing"
-    return
-  fi
-
   mkdir toolchain
   cat > toolchain/BUILD <<'EOF'
-load("@bazel_tools//tools/jdk:default_java_toolchain.bzl", "default_java_toolchain")
+load("@rules_java//toolchains:default_java_toolchain.bzl", "default_java_toolchain")
 default_java_toolchain(
     name = "java_toolchain",
     source_version = "17",
@@ -222,7 +217,7 @@ EOF
 
   mkdir toolchain
   cat > toolchain/BUILD <<'EOF'
-load("@bazel_tools//tools/jdk:default_java_toolchain.bzl", "default_java_toolchain")
+load("@rules_java//toolchains:default_java_toolchain.bzl", "default_java_toolchain")
 genrule(
     name = "gen_javabuilder",
     srcs = ["@remote_java_tools//:JavaBuilder"],

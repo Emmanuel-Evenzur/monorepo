@@ -247,31 +247,37 @@ public class BaseRuleClasses {
           // Input files for every test action
           .add(
               attr("$test_wrapper", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .singleArtifact()
                   .value(env.getToolsLabel("//tools/test:test_wrapper")))
           .add(
               attr("$xml_writer", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .singleArtifact()
                   .value(env.getToolsLabel("//tools/test:xml_writer")))
           .add(
               attr("$test_runtime", LABEL_LIST)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .value(getTestRuntimeLabelList(env)))
           .add(
               attr("$test_setup_script", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .singleArtifact()
                   .value(env.getToolsLabel("//tools/test:test_setup")))
           .add(
               attr("$xml_generator_script", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .singleArtifact()
                   .value(env.getToolsLabel("//tools/test:test_xml_generator")))
           .add(
               attr("$collect_coverage_script", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .singleArtifact()
                   .value(env.getToolsLabel("//tools/test:collect_coverage")))
           // Input files for test actions collecting code coverage
@@ -282,7 +288,8 @@ public class BaseRuleClasses {
           // Used in the one-per-build coverage report generation action.
           .add(
               attr(":coverage_report_generator", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory())
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .value(
                       coverageReportGeneratorAttribute(
                           env.getToolsLabel(DEFAULT_COVERAGE_REPORT_GENERATOR_VALUE))))
@@ -301,7 +308,8 @@ public class BaseRuleClasses {
           // RunCommand.java to self-transition --run_under to the exec configuration.
           .add(
               attr(":run_under_exec_config", LABEL)
-                  .cfg(ExecutionTransitionFactory.createFactory("test"))
+                  .cfg(
+                      ExecutionTransitionFactory.createFactory(DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                   .value(RUN_UNDER_EXEC_CONFIG)
                   .skipPrereqValidatorCheck())
           .add(
@@ -552,31 +560,6 @@ public class BaseRuleClasses {
     }
   }
 
-  /** A base rule for all binary rules. */
-  public static final class BinaryBaseRule implements RuleDefinition {
-    @Override
-    public RuleClass build(RuleClass.Builder builder, RuleDefinitionEnvironment env) {
-      return builder
-          .add(attr("args", STRING_LIST))
-          .add(attr("env", STRING_DICT))
-          .add(attr("output_licenses", LICENSE))
-          .add(
-              attr(Rule.IS_EXECUTABLE_ATTRIBUTE_NAME, BOOLEAN)
-                  .value(true)
-                  .nonconfigurable("Called from RunCommand.isExecutable, which takes a Target"))
-          .build();
-    }
-
-    @Override
-    public Metadata getMetadata() {
-      return RuleDefinition.Metadata.builder()
-          .name("$binary_base_rule")
-          .type(RuleClassType.ABSTRACT)
-          .ancestors(MakeVariableExpandingRule.class)
-          .build();
-    }
-  }
-
   /**
    * An empty rule that exists for the sole purpose to completely remove a native rule while it's
    * still defined as a Starlark rule in builtins.
@@ -644,7 +627,7 @@ public class BaseRuleClasses {
             """
                 .formatted(ruleName, bzlLoadLabel, ruleName));
       } else {
-        ruleContext.ruleError("Rule is unimplemented.");
+        ruleContext.ruleError("Rule '" + ruleName + "' is unimplemented.");
       }
       return null;
     }

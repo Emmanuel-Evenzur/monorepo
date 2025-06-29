@@ -704,7 +704,6 @@ public class GrpcCacheClientTest {
       throws Exception {
     UploadManifest uploadManifest =
         UploadManifest.create(
-            combinedCache.options,
             combinedCache.getRemoteCacheCapabilities(),
             combinedCache.digestUtil,
             remotePathResolver,

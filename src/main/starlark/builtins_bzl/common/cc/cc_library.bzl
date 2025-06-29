@@ -80,9 +80,7 @@ def _cc_library_impl(ctx):
     )
 
     precompiled_objects = cc_common.create_compilation_outputs(
-        # TODO(bazel-team): Perhaps this should be objects, leaving as it is in the original
-        # Java code for now. Changing it might cause breakages.
-        objects = depset(precompiled_files[1]),
+        objects = depset(precompiled_files[0]),
         pic_objects = depset(precompiled_files[1]),
     )
 
@@ -114,7 +112,6 @@ def _cc_library_impl(ctx):
     if ctx.file.linkstamp != None:
         linkstamps = []
         linkstamps.append(cc_internal.create_linkstamp(
-            actions = ctx.actions,
             linkstamp = ctx.file.linkstamp,
             compilation_context = compilation_context,
         ))
@@ -512,7 +509,7 @@ def _check_no_repeated_srcs(ctx):
     seen = {}
     for target in ctx.attr.srcs:
         if DefaultInfo in target:
-            for file in target.files.to_list():
+            for file in target[DefaultInfo].files.to_list():
                 extension = "." + file.extension
                 if extension not in cc_helper.extensions.CC_HEADER:
                     if extension in cc_helper.extensions.CC_AND_OBJC:
@@ -526,7 +523,7 @@ ALLOWED_SRC_FILES = []
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.CC_SOURCE)
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.C_SOURCE)
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.CC_HEADER)
-ALLOWED_SRC_FILES.extend(cc_helper.extensions.ASSESMBLER_WITH_C_PREPROCESSOR)
+ALLOWED_SRC_FILES.extend(cc_helper.extensions.ASSEMBLER_WITH_C_PREPROCESSOR)
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.ASSEMBLER)
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.ARCHIVE)
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.PIC_ARCHIVE)
@@ -537,7 +534,7 @@ ALLOWED_SRC_FILES.extend(cc_helper.extensions.SHARED_LIBRARY)
 SRCS_FOR_COMPILATION = []
 SRCS_FOR_COMPILATION.extend(cc_helper.extensions.CC_SOURCE)
 SRCS_FOR_COMPILATION.extend(cc_helper.extensions.C_SOURCE)
-SRCS_FOR_COMPILATION.extend(cc_helper.extensions.ASSESMBLER_WITH_C_PREPROCESSOR)
+SRCS_FOR_COMPILATION.extend(cc_helper.extensions.ASSEMBLER_WITH_C_PREPROCESSOR)
 SRCS_FOR_COMPILATION.extend(cc_helper.extensions.ASSEMBLER)
 
 ALLOWED_SRC_FILES.extend(cc_helper.extensions.OBJECT_FILE)

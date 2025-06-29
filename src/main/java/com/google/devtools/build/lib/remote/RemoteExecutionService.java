@@ -70,7 +70,6 @@ import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.ExecutionRequirements;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
-import com.google.devtools.build.lib.actions.ForbiddenActionInputException;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.SpawnResult;
@@ -388,7 +387,7 @@ public class RemoteExecutionService {
       InputMetadataProvider inputMetadataProvider,
       ArtifactPathResolver artifactPathResolver,
       @Nullable SpawnScrubber spawnScrubber)
-      throws IOException, ForbiddenActionInputException {
+      throws IOException {
     // Deduplicate concurrent computations for the same node. It's not possible to use
     // MerkleTreeCache#get(key, loader) because the loading computation may cause other nodes to be
     // recursively looked up, which is not allowed. Instead, use a future as described at
@@ -411,8 +410,6 @@ public class RemoteExecutionService {
       Throwable cause = checkNotNull(e.getCause());
       if (cause instanceof IOException ioException) {
         throw ioException;
-      } else if (cause instanceof ForbiddenActionInputException forbiddenActionInputException) {
-        throw forbiddenActionInputException;
       } else {
         checkState(cause instanceof RuntimeException);
         throw (RuntimeException) cause;
@@ -426,7 +423,7 @@ public class RemoteExecutionService {
       InputMetadataProvider inputMetadataProvider,
       ArtifactPathResolver artifactPathResolver,
       @Nullable SpawnScrubber scrubber)
-      throws IOException, ForbiddenActionInputException {
+      throws IOException {
     ConcurrentLinkedQueue<MerkleTree> subMerkleTrees = new ConcurrentLinkedQueue<>();
     subMerkleTrees.add(
         MerkleTree.build(
@@ -973,13 +970,20 @@ public class RemoteExecutionService {
               "Failed creating directory and parents for %s",
               symlink.path())
           .createDirectoryAndParents();
-      // If a directory output is being materialized as a symlink, we must first delete the
-      // preexisting empty directory.
-      if (symlink.path().exists(Symlinks.NOFOLLOW)
-          && symlink.path().isDirectory(Symlinks.NOFOLLOW)) {
+      // If a directory output is being materialized as a symlink, creating the symlink fails as we
+      // must first delete the preexisting empty directory. Since this is rare (and in the future
+      // BwoB may no longer eagerly create these directories), we don't delete the directory
+      // beforehand.
+      try {
+        symlink.path().createSymbolicLink(symlink.target());
+      } catch (IOException e) {
+        if (!symlink.path().isDirectory(Symlinks.NOFOLLOW)) {
+          throw e;
+        }
+        // Retry after deleting the directory.
         symlink.path().delete();
+        symlink.path().createSymbolicLink(symlink.target());
       }
-      symlink.path().createSymbolicLink(symlink.target());
     }
   }
 
@@ -1295,7 +1299,7 @@ public class RemoteExecutionService {
 
       var execPath = file.path.relativeTo(execRoot);
       var isInMemoryOutputFile = inMemoryOutput != null && execPath.equals(inMemoryOutputPath);
-      if (!isInMemoryOutputFile && shouldDownload(result, execPath)) {
+      if (!isInMemoryOutputFile && shouldDownload(result, execPath, /* treeRootExecPath= */ null)) {
         Path tmpPath = tempPathGenerator.generateTempPath();
         realToTmpPath.put(file.path, tmpPath);
         downloadsBuilder.add(
@@ -1341,28 +1345,28 @@ public class RemoteExecutionService {
     }
 
     for (Map.Entry<Path, DirectoryMetadata> entry : metadata.directories()) {
+      PathFragment treeRootExecPath = entry.getKey().relativeTo(execRoot);
+
       for (FileMetadata file : entry.getValue().files()) {
         if (realToTmpPath.containsKey(file.path)) {
           continue;
         }
 
-        if (shouldDownload(result, file.path.relativeTo(execRoot))) {
+        if (shouldDownload(result, file.path.relativeTo(execRoot), treeRootExecPath)) {
           Path tmpPath = tempPathGenerator.generateTempPath();
           realToTmpPath.put(file.path, tmpPath);
           downloadsBuilder.add(
               downloadFile(
                   context, progressStatusListener, file, tmpPath, action.getRemotePathResolver()));
+        } else if (hasBazelOutputService) {
+          downloadsBuilder.add(immediateFuture(file));
         } else {
-          if (hasBazelOutputService) {
-            downloadsBuilder.add(immediateFuture(file));
-          } else {
-            checkNotNull(remoteActionFileSystem)
-                .injectRemoteFile(
-                    file.path().asFragment(),
-                    DigestUtil.toBinaryDigest(file.digest()),
-                    file.digest().getSizeBytes(),
-                    expirationTime);
-          }
+          checkNotNull(remoteActionFileSystem)
+              .injectRemoteFile(
+                  file.path().asFragment(),
+                  DigestUtil.toBinaryDigest(file.digest()),
+                  file.digest().getSizeBytes(),
+                  expirationTime);
         }
       }
     }
@@ -1720,7 +1724,8 @@ public class RemoteExecutionService {
     return previousSpawnResult;
   }
 
-  private boolean shouldDownload(RemoteActionResult result, PathFragment execPath) {
+  private boolean shouldDownload(
+      RemoteActionResult result, PathFragment execPath, @Nullable PathFragment treeRootExecPath) {
     if (outputService instanceof BazelOutputService) {
       return false;
     }
@@ -1730,7 +1735,7 @@ public class RemoteExecutionService {
     if (result.getExitCode() != 0) {
       return true;
     }
-    return remoteOutputChecker.shouldDownloadOutput(execPath);
+    return remoteOutputChecker.shouldDownloadOutput(execPath, treeRootExecPath);
   }
 
   private static String prettyPrint(ActionInput actionInput) {
@@ -1761,7 +1766,6 @@ public class RemoteExecutionService {
             }
 
             return UploadManifest.create(
-                remoteOptions,
                 combinedCache.getRemoteCacheCapabilities(),
                 digestUtil,
                 action.getRemotePathResolver(),
@@ -1810,7 +1814,7 @@ public class RemoteExecutionService {
 
     try (SilentCloseable c = Profiler.instance().profile("checkForConcurrentModifications")) {
       checkForConcurrentModifications(action, concurrentChangesCheckLevel);
-    } catch (IOException | ForbiddenActionInputException e) {
+    } catch (IOException e) {
       report(
           Event.warn(
               String.format(
@@ -1869,8 +1873,7 @@ public class RemoteExecutionService {
   }
 
   private void checkForConcurrentModifications(
-      RemoteAction action, ConcurrentChangesCheckLevel level)
-      throws IOException, ForbiddenActionInputException {
+      RemoteAction action, ConcurrentChangesCheckLevel level) throws IOException {
     if (level == ConcurrentChangesCheckLevel.OFF) {
       return;
     }
