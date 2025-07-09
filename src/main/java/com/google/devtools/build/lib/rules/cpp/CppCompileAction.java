@@ -659,7 +659,6 @@ public class CppCompileAction extends AbstractAction implements IncludeScannable
         DetailedExitCode code = createDetailedExitCode(message, Code.COMMAND_GENERATION_FAILURE);
         throw new ActionExecutionException(message, this, /* catastrophe= */ false, code);
       }
-      usedCpp20Modules = computeUsedCpp20Modules(actionExecutionContext);
       commandLineKey = computeCommandLineKey(options);
       ImmutableList<PathFragment> systemIncludeDirs = getSystemIncludeDirs(options);
       boolean siblingLayout =
@@ -668,6 +667,7 @@ public class CppCompileAction extends AbstractAction implements IncludeScannable
               .getOptions(BuildLanguageOptions.class)
               .experimentalSiblingRepositoryLayout;
       if (!shouldScanIncludes) {
+        usedCpp20Modules = computeUsedCpp20Modules(actionExecutionContext);
         // When not actually doing include scanning, add all prunable headers to additionalInputs.
         // This is necessary because the inputs that can be pruned by .d file parsing must be
         // returned from discoverInputs() and they cannot be in mandatoryInputs. Thus, even with
