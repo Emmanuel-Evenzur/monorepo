@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright 2015 The Bazel Authors. All rights reserved.
 #
@@ -313,9 +313,6 @@ common --enable_bzlmod
 # Disable WORKSPACE in all shell integration tests
 common --noenable_workspace
 
-# Verify compatibility before the flip (https://github.com/bazelbuild/bazel/issues/12821)
-common --nolegacy_external_runfiles
-
 # Support JDK 21, data dependencies that get compiled and used tools need to be
 # run with 21 runtime.
 build --java_runtime_version=21
@@ -476,6 +473,8 @@ function setup_javatest_support() {
   setup_javatest_common
   grep -q 'name = "junit4"' third_party/BUILD \
     || cat <<EOF >>third_party/BUILD
+load("@rules_java//java:java_import.bzl", "java_import")
+
 java_import(
     name = "junit4",
     jars = [
@@ -905,4 +904,13 @@ function override_java_tools() {
     add_to_bazelrc "build --override_repository=${JAVA_TOOLS_REPO_PREFIX}remote_java_tools_darwin_x86_64=${JAVA_TOOLS_PREBUILT_DIR}"
     add_to_bazelrc "build --override_repository=${JAVA_TOOLS_REPO_PREFIX}remote_java_tools_darwin_arm64=${JAVA_TOOLS_PREBUILT_DIR}"
   fi
+}
+
+# Copies the PROJECT.scl schema definition into a test directory so test
+# PROJECT.scl files can load it.
+function write_project_scl_definition() {
+  local TEST_DIR=third_party/bazel/src/main/protobuf/project
+  mkdir -p ${TEST_DIR}
+  cp "$(rlocation "io_bazel/src/main/protobuf/project/project_proto.scl")" "${TEST_DIR}"
+  touch "${TEST_DIR}/BUILD"
 }

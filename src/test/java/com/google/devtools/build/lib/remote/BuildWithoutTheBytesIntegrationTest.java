@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.remote;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.devtools.build.lib.vfs.FileSystemUtils.readContent;
-import static java.lang.System.lineSeparator;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assume.assumeFalse;
@@ -40,15 +39,15 @@ import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Symlinks;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.io.IOException;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
 /** Integration tests for Build without the Bytes. */
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesIntegrationTestBase {
   @ClassRule @Rule public static final WorkerInstance worker = IntegrationTestUtils.createWorker();
 
@@ -415,7 +414,128 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
     buildTarget("//a:bar");
 
     // Assert: target was successfully built
-    assertValidOutputFile("a/bar.out", "foo" + lineSeparator() + "updated bar" + lineSeparator());
+    assertValidOutputFile("a/bar.out", "foo\nupdated bar\n");
+  }
+
+  @Test
+  public void remoteCacheEvictBlobs_whenPrefetchingSymlinkedInput_exitWithCode39()
+      throws Exception {
+    // Arrange: Prepare workspace and populate remote cache
+    writeSymlinkRule();
+    write(
+        "a/BUILD",
+        """
+        load("//:symlink.bzl", "symlink")
+
+        genrule(
+            name = "foo",
+            srcs = ["foo.in"],
+            outs = ["foo.out"],
+            cmd = "cat $(SRCS) > $@",
+        )
+
+        symlink(
+            name = "symlinked_foo",
+            target_artifact = ":foo.out",
+        )
+
+        genrule(
+            name = "bar",
+            srcs = [
+                ":symlinked_foo",
+                "bar.in",
+            ],
+            outs = ["bar.out"],
+            cmd = "cat $(SRCS) > $@",
+            tags = ["no-remote-exec"],
+        )
+        """);
+    write("a/foo.in", "foo");
+    write("a/bar.in", "bar");
+
+    // Populate remote cache
+    buildTarget("//a:bar");
+    var bytes = readContent(getOutputPath("a/foo.out"));
+    var hashCode = getDigestHashFunction().getHashFunction().hashBytes(bytes);
+    getOnlyElement(getArtifacts("//a:symlinked_foo")).getPath().delete();
+    getOutputPath("a/foo.out").delete();
+    getOutputPath("a/bar.out").delete();
+    getOutputBase().getRelative("action_cache").deleteTreesBelow();
+    restartServer();
+
+    // Clean build, foo.out isn't downloaded
+    buildTarget("//a:bar");
+    assertOutputDoesNotExist("a/foo.out");
+    assertOutputsDoNotExist("//a:symlinked_foo");
+
+    // Act: Evict blobs from remote cache and do an incremental build
+    evictAllBlobs();
+    write("a/bar.in", "updated bar");
+    var error = assertThrows(BuildFailedException.class, () -> buildTarget("//a:bar"));
+
+    // Assert: Exit code is 39
+    assertThat(error).hasMessageThat().contains("Lost inputs no longer available remotely");
+    assertThat(error).hasMessageThat().contains("a/symlinked_foo");
+    assertThat(error).hasMessageThat().contains(String.format("%s/%s", hashCode, bytes.length));
+    assertThat(error.getDetailedExitCode().getExitCode().getNumericExitCode()).isEqualTo(39);
+  }
+
+  @Test
+  public void remoteCacheEvictBlobs_whenPrefetchingSymlinkedInput_succeedsWithActionRewinding()
+      throws Exception {
+    writeSymlinkRule();
+    write(
+        "a/BUILD",
+        """
+        load("//:symlink.bzl", "symlink")
+
+        genrule(
+            name = "foo",
+            srcs = ["foo.in"],
+            outs = ["foo.out"],
+            cmd = "cat $(SRCS) > $@",
+        )
+
+        symlink(
+            name = "symlinked_foo",
+            target_artifact = ":foo.out",
+        )
+
+        genrule(
+            name = "bar",
+            srcs = [
+                ":symlinked_foo",
+                "bar.in",
+            ],
+            outs = ["bar.out"],
+            cmd = "cat $(SRCS) > $@",
+            tags = ["no-remote-exec"],
+        )
+        """);
+    write("a/foo.in", "foo");
+    write("a/bar.in", "bar");
+
+    // Populate remote cache
+    buildTarget("//a:bar");
+    getOnlyElement(getArtifacts("//a:symlinked_foo")).getPath().delete();
+    getOutputPath("a/foo.out").delete();
+    getOutputPath("a/bar.out").delete();
+    getOutputBase().getRelative("action_cache").deleteTreesBelow();
+    restartServer();
+
+    // Clean build, foo.out isn't downloaded
+    buildTarget("//a:bar");
+    assertOutputDoesNotExist("a/foo.out");
+    assertOutputsDoNotExist("//a:symlinked_foo");
+
+    // Act: Evict blobs from remote cache and do an incremental build
+    evictAllBlobs();
+    write("a/bar.in", "updated bar");
+    enableActionRewinding();
+    buildTarget("//a:bar");
+
+    // Assert: target was successfully built
+    assertValidOutputFile("a/bar.out", "foo\nupdated bar\n");
   }
 
   @Test
@@ -517,8 +637,7 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
 
     // Assert: target was successfully built
     assertOutputsDoNotExist("//a:bar");
-    assertOnlyOutputRemoteContent(
-        "//a:bar", "bar.out", "foo" + lineSeparator() + "updated bar" + lineSeparator());
+    assertOnlyOutputRemoteContent("//a:bar", "bar.out", "foo\nupdated bar\n");
   }
 
   @Test
@@ -573,7 +692,7 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
     waitDownloads();
 
     // Assert: target was successfully built
-    assertValidOutputFile("a/bar.out", "foo" + lineSeparator() + "updated bar" + lineSeparator());
+    assertValidOutputFile("a/bar.out", "foo\nupdated bar\n");
   }
 
   @Test
@@ -629,7 +748,7 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
     waitDownloads();
 
     // Assert: target was successfully built
-    assertValidOutputFile("a/bar.out", "file-inside\nupdated bar" + lineSeparator());
+    assertValidOutputFile("a/bar.out", "file-inside\nupdated bar\n");
   }
 
   @Test
@@ -679,7 +798,7 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
     buildTarget("//a:bar");
 
     // Assert: target was successfully built
-    assertValidOutputFile("a/bar.out", "file-inside\nupdated bar" + lineSeparator());
+    assertValidOutputFile("a/bar.out", "file-inside\nupdated bar\n");
   }
 
   @Test
@@ -730,7 +849,7 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
     buildTarget("//a:bar", "//a:foo.out");
 
     // Assert: all outputs were downloaded
-    assertValidOutputFile("a/bar.out", "file-inside\nbar" + lineSeparator());
+    assertValidOutputFile("a/bar.out", "file-inside\nbar\n");
     assertValidOutputFile("a/foo.out/file-inside", "hello world");
   }
 
@@ -827,7 +946,7 @@ public class BuildWithoutTheBytesIntegrationTest extends BuildWithoutTheBytesInt
     buildTarget("//a:bin");
 
     // Assert: all runfiles were downloaded
-    assertValidOutputFile("a/bar.out", "file-inside\nbar" + lineSeparator());
+    assertValidOutputFile("a/bar.out", "file-inside\nbar\n");
     assertValidOutputFile("a/foo.out/file-inside", "hello world");
   }
 

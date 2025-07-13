@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright 2017 The Bazel Authors. All rights reserved.
 #
@@ -200,7 +200,7 @@ function test_universe_scope_specified() {
   # Trim to just configurations.
   HOST_CONFIG=${PKG_HOST/"//$pkg:host"}
   TARGET_CONFIG=${PKG_TARGET/"//$pkg:target"}
-  # Ensure they are are not equal.
+  # Ensure they are not equal.
   assert_not_equals $HOST_CONFIG $TARGET_CONFIG
 }
 
@@ -327,6 +327,7 @@ EOF
   assert_contains "//$pkg:cclib_with_py_dep .*PythonConfiguration" output
 
   assert_not_contains "//$pkg:pylib .*CppConfiguration" output
+
   assert_contains "//$pkg:pylib .*PythonConfiguration" output
 
   assert_contains "//$pkg:mylib.cc (null) \[\]" output
@@ -961,7 +962,7 @@ EOF
   assert_contains "//$pkg:pylibtwo" output
 
   bazel cquery "//$pkg:all" --output=starlark \
-    --starlark:expr="str(target.label) + '%' + str(target.files.to_list()[1].is_directory)" \
+    --starlark:expr="str(target.label) + '%' + str(providers(target)['DefaultInfo'].files.to_list()[1].is_directory)" \
     > output 2>"$TEST_log" || fail "Expected success"
 
   assert_contains "//$pkg:pylibtwo%False" output
@@ -1250,7 +1251,7 @@ cc_library(
 EOF
 
   bazel cquery "//$pkg:all" --output=starlark \
-    --starlark:expr="' '.join([f.basename for f in target.files.to_list()])" \
+    --starlark:expr="' '.join([f.basename for f in providers(target)['DefaultInfo'].files.to_list()])" \
     > output 2>"$TEST_log" || fail "Expected failure"
 
   if "$is_windows"; then
@@ -1271,7 +1272,7 @@ exports_files(srcs = ["foo"])
 EOF
 
   bazel cquery "//$pkg:foo" --output=starlark \
-    --starlark:expr="'path=' + target.files.to_list()[0].path" \
+    --starlark:expr="'path=' + providers(target)['DefaultInfo'].files.to_list()[0].path" \
     > output 2>"$TEST_log" || fail "Expected failure"
 
   assert_contains "^path=$pkg/foo$" output
@@ -1336,7 +1337,7 @@ EOF
   # A file
   bazel cquery "//$pkg:srcfile.txt" --output=starlark --starlark:file="$pkg/outfunc.bzl" >output \
     2>"$TEST_log" || fail "Expected success"
-  assert_contains "//$pkg:srcfile.txt:providers=.*FileProvider.*FilesToRunProvider.*LicensesProvider.*VisibilityProvider" \
+  assert_contains "//$pkg:srcfile.txt:providers=.*FileProvider.*FilesToRunProvider.*VisibilityProvider" \
     output
   assert_contains "VisibilityProvider.label:@@\?//$pkg:srcfile.txt" output
 }

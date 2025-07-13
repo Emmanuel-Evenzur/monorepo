@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.analysis.actions.ActionConstructionContext;
 import com.google.devtools.build.lib.analysis.actions.SymlinkTreeAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue.RunfileSymlinksMode;
+import com.google.devtools.build.lib.analysis.config.CoreOptions;
 import com.google.devtools.build.lib.analysis.config.RunUnder;
 import com.google.devtools.build.lib.analysis.config.RunUnder.LabelRunUnder;
 import com.google.devtools.build.lib.analysis.test.TestActionBuilder;
@@ -49,6 +50,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 
@@ -87,7 +89,7 @@ public final class RunfilesSupport {
   @VisibleForTesting
   public static class RunfilesTreeImpl implements RunfilesTree {
 
-    private static final WeakReference<Map<PathFragment, Artifact>> NOT_YET_COMPUTED =
+    private static final WeakReference<SortedMap<PathFragment, Artifact>> NOT_YET_COMPUTED =
         new WeakReference<>(null);
 
     private final PathFragment execPath;
@@ -108,7 +110,7 @@ public final class RunfilesSupport {
      * com.google.devtools.build.lib.runtime.GcThrashingDetector} may throw a manual OOM before all
      * soft references are collected. See b/322474776.
      */
-    @Nullable private volatile WeakReference<Map<PathFragment, Artifact>> cachedMapping;
+    @Nullable private volatile WeakReference<SortedMap<PathFragment, Artifact>> cachedMapping;
 
     private final boolean buildRunfileLinks;
     private final RunfileSymlinksMode runfileSymlinksMode;
@@ -145,12 +147,12 @@ public final class RunfilesSupport {
     }
 
     @Override
-    public Map<PathFragment, Artifact> getMapping() {
+    public SortedMap<PathFragment, Artifact> getMapping() {
       if (cachedMapping == null) {
         return runfiles.getRunfilesInputs(repoMappingManifest);
       }
 
-      Map<PathFragment, Artifact> result = cachedMapping.get();
+      SortedMap<PathFragment, Artifact> result = cachedMapping.get();
       if (result != null) {
         return result;
       }
@@ -196,11 +198,6 @@ public final class RunfilesSupport {
     @Override
     public Artifact getRepoMappingManifestForLogging() {
       return repoMappingManifest;
-    }
-
-    @Override
-    public boolean isLegacyExternalRunfiles() {
-      return runfiles.isLegacyExternalRunfiles();
     }
 
     @Override
@@ -286,9 +283,7 @@ public final class RunfilesSupport {
     if (runUnder instanceof LabelRunUnder && TargetUtils.isTestRule(ruleContext.getRule())) {
       TransitiveInfoCollection runUnderTarget = ruleContext.getRunUnderPrerequisite();
       runfiles =
-          new Runfiles.Builder(
-                  ruleContext.getWorkspaceName(),
-                  ruleContext.getConfiguration().legacyExternalRunfiles())
+          new Runfiles.Builder(ruleContext.getWorkspaceName())
               .merge(getRunfiles(runUnderTarget, ruleContext.getWorkspaceName()))
               .merge(runfiles)
               .build();
@@ -713,7 +708,12 @@ public final class RunfilesSupport {
                 runfiles.getArtifacts(),
                 runfiles.getSymlinks(),
                 runfiles.getRootSymlinks(),
-                ruleContext.getWorkspaceName()));
+                ruleContext.getWorkspaceName(),
+                ruleContext
+                    .getConfiguration()
+                    .getOptions()
+                    .get(CoreOptions.class)
+                    .compactRepoMapping));
     return repoMappingManifest;
   }
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright 2018 The Bazel Authors. All rights reserved.
 #
@@ -424,7 +424,7 @@ foo(
 )
 EOF
   cat > "$pkg/tool.sh" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 echo "$1" > "$2"
 EOF
   chmod +x "$pkg/tool.sh"
@@ -1261,7 +1261,7 @@ def _my_jpl_aspect_imp(target, ctx):
 
 my_jpl_aspect = aspect(
   attr_aspects = ['deps', 'exports'],
-  required_aspect_providers = [['proto_java']],
+  required_aspect_providers = [],
   attrs = {
     'aspect_param': attr.string(default = 'x', values = ['x', 'y'])
   },
@@ -1480,6 +1480,8 @@ EOF
   assert_not_contains "actions" output
 
   bazel build --nobuild "//$pkg:foo"
+  # Skyframe state becomes "dirty" after an initial build because that build alters the lockfile
+  bazel build --nobuild "//$pkg:foo"
 
   bazel aquery --output=textproto --skyframe_state > output 2> "$TEST_log" \
     || fail "Expected success"
@@ -1512,6 +1514,8 @@ EOF
 
   bazel clean
   bazel build --nobuild "//$pkg:foo"
+  # Skyframe state becomes "dirty" after an initial build because that build alters the lockfile
+  bazel build --nobuild "//$pkg:foo"
 
   bazel aquery --output=textproto --skyframe_state ${QUERY} > output 2> "$TEST_log" \
     || fail "Expected success"
@@ -1538,6 +1542,8 @@ EOF
   cat output >> "$TEST_log"
   assert_not_contains "actions" output
 
+  bazel build --nobuild "//$pkg:foo"
+  # Skyframe state becomes "dirty" after an initial build because that build alters the lockfile
   bazel build --nobuild "//$pkg:foo"
 
   bazel aquery --output=textproto --skyframe_state > output 2> "$TEST_log" \
@@ -1569,6 +1575,8 @@ EOF
   cat output >> "$TEST_log"
   assert_not_contains "actions" output
 
+  bazel build --nobuild "//$pkg:foo"
+  # Skyframe state becomes "dirty" after an initial build because that build alters the lockfile
   bazel build --nobuild "//$pkg:foo"
 
   bazel aquery --output=jsonproto --skyframe_state > output 2> "$TEST_log" \

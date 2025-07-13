@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright 2015 The Bazel Authors. All rights reserved.
 #
@@ -924,6 +924,36 @@ EOF
   expect_log "valid names may contain only A-Z, a-z, 0-9, '-', '_', '.', and must start with a letter"
 }
 
+function test_starting_with_number_in_repo_name() {
+  local r=$TEST_TMPDIR/r
+  rm -fr $r
+  mkdir -p $r/a
+
+  touch $r/a/REPO.bazel
+  cat > $r/a/BUILD <<EOF
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+cc_binary(
+    name = "bin",
+    srcs = ["bin.cc"],
+)
+EOF
+  cat > $r/a/bin.cc <<EOF
+int main() { return 0; };
+EOF
+
+  cat >> MODULE.bazel <<EOF
+local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+local_repository(
+    name = "1name",
+    path = "$r/a",
+)
+EOF
+  add_rules_cc "MODULE.bazel"
+
+  bazel build @1name//:bin &> $TEST_log || fail "Build failed unexpectedly"
+}
+
 function test_remote_includes() {
   local remote=$TEST_TMPDIR/r
   rm -fr $remote
@@ -1062,6 +1092,28 @@ local_repository(
 )
 EOF
   bazel build @r//... &> $TEST_log && fail "Build succeeded unexpectedly"
+  expect_log "(absolute: \"$TEST_TMPDIR/r\") but it does not exist"
+}
+
+function test_local_repository_path_exists_then_doesnt_exist() {
+  local r=$TEST_TMPDIR/r
+  rm -rf $r
+  mkdir -p $r
+  touch $r/REPO.bazel
+  cat > $r/BUILD <<'EOF'
+filegroup(name='r')
+EOF
+  cat >> MODULE.bazel <<EOF
+local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+local_repository(
+    name = "r",
+    path = "$TEST_TMPDIR/r",
+)
+EOF
+  bazel build @r &> $TEST_log || fail "Build failed unexpectedly"
+
+  rm -rf $r
+  bazel build @r &> $TEST_log && fail "Build succeeded unexpectedly"
   expect_log "(absolute: \"$TEST_TMPDIR/r\") but it does not exist"
 }
 

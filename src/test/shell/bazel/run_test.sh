@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright 2020 The Bazel Authors. All rights reserved.
 #
@@ -95,9 +95,11 @@ function test_windows_argument_escaping() {
     return # Run test only on Windows.
   fi
 
+  add_rules_shell "MODULE.bazel"
   local -r pkg="pkg${LINENO}"
   mkdir $pkg
   cat >$pkg/BUILD <<eof
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 sh_binary(
   name = "a",
   srcs = [":a.sh"],
@@ -170,11 +172,6 @@ EOF
 }
 
 function test_run_test_exit_code() {
-  # EXPERIMENTAL_SPLIT_XML_GENERATION is set by the outer bazel and influences
-  # the test setup of the inner bazel. To make sure we hit the codepath we want
-  # to test here, unset the variable.
-  unset EXPERIMENTAL_SPLIT_XML_GENERATION
-
   add_rules_shell "MODULE.bazel"
   mkdir -p foo
   cat > foo/BUILD <<'EOF'
@@ -204,7 +201,7 @@ set -x
 exit 1
 EOF
   chmod +x foo/exit1.sh
-  bazel run --noexperimental_split_xml_generation //foo:exit1 &>"$TEST_log" \
+  bazel run //foo:exit1 &>"$TEST_log" \
     && fail "Expected exit code 1, received $?"
 
   # Avoid failing the test because of the last non-zero exit-code.

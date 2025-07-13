@@ -17,24 +17,24 @@ package com.google.devtools.build.lib.packages;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.cmdline.RepositoryMapping;
 import com.google.devtools.build.lib.cmdline.StarlarkThreadContext;
+import com.google.devtools.build.lib.packages.Package.Builder.PackageLimits;
 import com.google.devtools.build.lib.packages.Package.Builder.PackageSettings;
 import com.google.devtools.build.lib.packages.Package.ConfigSettingVisibilityPolicy;
 import com.google.devtools.build.lib.packages.Package.Declarations;
 import com.google.devtools.build.lib.packages.Package.Metadata;
 import com.google.devtools.build.lib.packages.TargetRecorder.MacroNamespaceViolationException;
-import com.google.devtools.build.lib.util.HashCodes;
 import com.google.devtools.build.lib.vfs.RootedPath;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import java.util.Objects;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.concurrent.Semaphore;
 import javax.annotation.Nullable;
@@ -55,17 +55,15 @@ import net.starlark.java.syntax.Location;
 // another class of package piece obtained by evaluating a set of macros.
 public abstract sealed class PackagePiece extends Packageoid
     permits PackagePiece.ForBuildFile, PackagePiece.ForMacro {
-  protected final Identifier identifier;
-
-  public Identifier getIdentifier() {
-    return identifier;
-  }
-
   /**
-   * Returns the {@link PackagePiece} corresponding to the evaluation of the BUILD file for this
-   * package.
+   * The collection of all symbolic macro instances defined in this package piece, indexed by their
+   * name (not by {@link MacroInstance#getId id} - contrast with {@link Package#macros}). Null until
+   * the package piece is fully initialized by {@link #setMacrosByName}, in turn called by this
+   * package piece's builder's {@code finishBuild()}.
    */
-  public abstract PackagePiece.ForBuildFile getPackagePieceForBuildFile();
+  @Nullable private ImmutableSortedMap<String, MacroInstance> macrosByName;
+
+  public abstract PackagePieceIdentifier getIdentifier();
 
   /**
    * Returns a (read-only, ordered) iterable of all the targets belonging to this package piece
@@ -86,31 +84,12 @@ public abstract sealed class PackagePiece extends Packageoid
   }
 
   /**
-   * Returns the target with a specified name, searching this package piece and the package piece
-   * for the package's BUILD file. Returns null if the target is not found. The target name must be
-   * valid, as defined by {@code LabelValidator#validateTargetName}.
-   *
-   * <p>Unlike {@link #getTarget}, this method does not throw an exception if the target is not
-   * found.
+   * Returns the macro instance declared in this package piece having the provided name; or null if
+   * no such macro instance exists.
    */
   @Nullable
-  public Target tryGetTargetHereOrBuildFile(String targetName) {
-    @Nullable Target target = targets.get(targetName);
-    if (target == null && getPackagePieceForBuildFile() != this) {
-      target = getPackagePieceForBuildFile().targets.get(targetName);
-    }
-    return target;
-  }
-
-  /**
-   * Returns the outermost macro instance declared in this package piece having the provided name;
-   * or null if no such macro instance exists.
-   */
-  @Nullable
-  @VisibleForTesting
-  MacroInstance getMacroByName(String name) {
-    // Note that `macros` is keyed by macro IDs, not names.
-    return macros.values().stream().filter(m -> m.getName().equals(name)).findFirst().orElse(null);
+  public MacroInstance getMacroByName(String name) {
+    return macrosByName.get(name);
   }
 
   private NoSuchTargetException noSuchTargetException(String targetName) {
@@ -124,116 +103,51 @@ public abstract sealed class PackagePiece extends Packageoid
     if (getMetadata().succinctTargetNotFoundErrors()) {
       return new NoSuchTargetException(
           label,
-          String.format(
-              "target '%s' not declared in package piece '%s'", targetName, getIdentifier()));
+          String.format("target '%s' not declared in %s", targetName, getShortDescription()));
     } else {
       String alternateTargetSuggestion =
           Package.getAlternateTargetSuggestion(getMetadata(), targetName, targets.keySet());
       return new NoSuchTargetException(
           label,
           String.format(
-              "target '%s' not declared in package piece %s%s",
-              targetName, getIdentifier(), alternateTargetSuggestion));
+              "target '%s' not declared in %s%s",
+              targetName, getShortDescription(), alternateTargetSuggestion));
     }
   }
 
   @Override
   public String toString() {
-    return "PackagePiece("
-        + getIdentifier()
-        + ")="
-        + (targets != null ? getTargets(Rule.class) : "initializing...");
+    return String.format(
+        "PackagePiece(%s defined by %s)=%s",
+        getIdentifier().getCanonicalFormName(),
+        getCanonicalFormDefinedBy(),
+        targets != null ? getTargets(Rule.class) : "initializing...");
   }
 
-  @Override
-  public String getShortDescription() {
-    return "package piece " + getIdentifier();
+  /**
+   * Returns the canonical form of the BUILD file label if this is a {@link
+   * PackagePiece.ForBuildFile}, or the canonical form of the macro class's declaring .bzl label and
+   * macro name, in {@code label%name} format, if this is a {@link PackagePiece.ForMacro}.
+   */
+  public abstract String getCanonicalFormDefinedBy();
+
+  /**
+   * Sets the macros map for this package piece. Intended only to be called by this package piece's
+   * builder.
+   *
+   * @param macros a collection of macro instances, which must have unique names.
+   */
+  protected void setMacrosByName(Collection<MacroInstance> macros) {
+    ImmutableSortedMap.Builder<String, MacroInstance> macrosByName =
+        ImmutableSortedMap.naturalOrder();
+    for (MacroInstance macro : macros) {
+      macrosByName.put(macro.getName(), macro);
+    }
+    this.macrosByName = macrosByName.buildOrThrow();
   }
 
-  private PackagePiece(Identifier identifier) {
-    this.identifier = identifier;
-  }
-
-  /** A unique identifier for a {@link PackagePiece}. */
-  public static sealed class Identifier permits PackagePiece.ForMacro.Identifier {
-    protected final PackageIdentifier packageIdentifier;
-    // BUILD file label for a {@link PackagePiece.ForBuildFile}, or the label of the macro class
-    // definition for a {@link PackagePiece.ForMacro}.
-    protected final Label definingLabel;
-
-    /**
-     * The canonical form of the package name if this is an identifier for a {@link
-     * PackagePiece.ForBuildFile}, or the canonical form of the macro instance name if this is an
-     * identifier for a {@link PackagePiece.ForMacro}.
-     *
-     * <p>This string is not unique, since multiple macro instances can have the same name. Intended
-     * to be used in combination with {@link #getCanonicalFormDefinedBy}, or with {@link
-     * #getDefiningLabel} + {@link #getDefiningSymbol} pair.
-     */
-    public String getCanonicalFormName() {
-      String pkgIdString = packageIdentifier.getCanonicalForm();
-      return getInstanceName() != null
-          ? String.format("%s:%s", pkgIdString, getInstanceName())
-          : pkgIdString;
-    }
-
-    public String getCanonicalFormDefinedBy() {
-      String definingLabelString = definingLabel.getCanonicalForm();
-      return getDefiningSymbol() != null
-          ? String.format("%s%%%s", definingLabelString, getDefiningSymbol())
-          : definingLabelString;
-    }
-
-    @Nullable
-    protected String getInstanceName() {
-      return null;
-    }
-
-    /**
-     * BUILD file label for a {@link PackagePiece.ForBuildFile}, or the label of the macro class
-     * definition for a {@link PackagePiece.ForMacro}.
-     */
-    public Label getDefiningLabel() {
-      return definingLabel;
-    }
-
-    @Nullable
-    public String getDefiningSymbol() {
-      return null;
-    }
-
-    @Override
-    public String toString() {
-      return String.format("%s defined by %s", getCanonicalFormName(), getCanonicalFormDefinedBy());
-    }
-
-    @Override
-    public boolean equals(Object other) {
-      if (this == other) {
-        return true;
-      }
-      if (!(other instanceof PackagePiece.Identifier that)) {
-        return false;
-      }
-      return this.packageIdentifier.equals(that.packageIdentifier)
-          && this.definingLabel.equals(that.definingLabel)
-          // Valid because PackagePiece.ForMacro.Identifier requires defining symbol and instance
-          // name to be non-null.
-          && Objects.equals(this.getDefiningSymbol(), that.getDefiningSymbol())
-          && Objects.equals(this.getInstanceName(), that.getInstanceName());
-    }
-
-    @Override
-    public int hashCode() {
-      return HashCodes.hashObjects(
-          packageIdentifier, definingLabel, getDefiningSymbol(), getInstanceName());
-    }
-
-    @VisibleForTesting
-    Identifier(PackageIdentifier packageIdentifier, Label definingLabel) {
-      this.packageIdentifier = packageIdentifier;
-      this.definingLabel = definingLabel;
-    }
+  protected PackagePiece(Metadata metadata, Declarations declarations) {
+    super(metadata, declarations);
   }
 
   /**
@@ -241,22 +155,30 @@ public abstract sealed class PackagePiece extends Packageoid
    * macros.
    */
   public static final class ForBuildFile extends PackagePiece {
-    private final Metadata metadata;
-    private final Declarations declarations;
+    private final PackagePieceIdentifier.ForBuildFile identifier;
+    // Can be changed during BUILD file evaluation due to exports_files() modifying its visibility.
+    // Cannot be in declarations because, since it's a Target, it holds a back reference to this
+    // PackagePiece.ForBuildFile object.
+    private InputFile buildFile;
 
     @Override
-    public PackagePiece.ForBuildFile getPackagePieceForBuildFile() {
-      return this;
+    public PackagePieceIdentifier.ForBuildFile getIdentifier() {
+      return identifier;
     }
 
     @Override
-    public Metadata getMetadata() {
-      return metadata;
+    public String getCanonicalFormDefinedBy() {
+      return getMetadata().buildFileLabel().getCanonicalForm();
     }
 
     @Override
-    public Package.Declarations getDeclarations() {
-      return declarations;
+    public String getShortDescription() {
+      return String.format("top-level package piece defined by %s", getCanonicalFormDefinedBy());
+    }
+
+    /** Returns the InputFile target for this package's BUILD file. */
+    public InputFile getBuildFile() {
+      return buildFile;
     }
 
     @Override
@@ -265,10 +187,10 @@ public abstract sealed class PackagePiece extends Packageoid
       // No-op: no macros to violate.
     }
 
-    private ForBuildFile(Metadata metadata) {
-      super(new Identifier(metadata.packageIdentifier(), metadata.buildFileLabel()));
-      this.metadata = metadata;
-      this.declarations = new Declarations();
+    private ForBuildFile(PackagePieceIdentifier.ForBuildFile identifier, Metadata metadata) {
+      super(metadata, new Declarations());
+      checkArgument(identifier.getPackageIdentifier().equals(metadata.packageIdentifier()));
+      this.identifier = identifier;
     }
 
     /** Creates a new {@link PackagePiece.ForBuildFile.Builder}. */
@@ -276,7 +198,7 @@ public abstract sealed class PackagePiece extends Packageoid
     // method and use the builder's constructor directly.
     public static Builder newBuilder(
         PackageSettings packageSettings,
-        PackageIdentifier id,
+        PackagePieceIdentifier.ForBuildFile identifier,
         RootedPath filename,
         String workspaceName,
         Optional<String> associatedModuleName,
@@ -291,10 +213,11 @@ public abstract sealed class PackagePiece extends Packageoid
         @Nullable ConfigSettingVisibilityPolicy configSettingVisibilityPolicy,
         @Nullable Globber globber,
         boolean enableNameConflictChecking,
-        boolean trackFullMacroInformation) {
+        boolean trackFullMacroInformation,
+        PackageLimits packageLimits) {
       Metadata metadata =
           Metadata.builder()
-              .packageIdentifier(id)
+              .packageIdentifier(identifier.getPackageIdentifier())
               .buildFilename(filename)
               .isRepoRulePackage(false)
               .repositoryMapping(repositoryMapping)
@@ -303,7 +226,7 @@ public abstract sealed class PackagePiece extends Packageoid
               .configSettingVisibilityPolicy(configSettingVisibilityPolicy)
               .succinctTargetNotFoundErrors(packageSettings.succinctTargetNotFoundErrors())
               .build();
-      ForBuildFile forBuildFile = new ForBuildFile(metadata);
+      ForBuildFile forBuildFile = new ForBuildFile(identifier, metadata);
       return new Builder(
           forBuildFile,
           packageSettings.precomputeTransitiveLoads(),
@@ -316,7 +239,8 @@ public abstract sealed class PackagePiece extends Packageoid
           generatorMap,
           globber,
           enableNameConflictChecking,
-          trackFullMacroInformation);
+          trackFullMacroInformation,
+          packageLimits);
     }
 
     /** A builder for {@link PackagePiece.ForBuildFile} objects. */
@@ -345,19 +269,26 @@ public abstract sealed class PackagePiece extends Packageoid
       }
 
       @Override
-      void setComputationSteps(long n) {
-        ((PackagePiece) pkg).computationSteps = n;
-      }
-
-      @Override
       @CanIgnoreReturnValue
       public Builder buildPartial() throws NoSuchPackageException {
         return (Builder) super.buildPartial();
       }
 
       @Override
+      protected void setBuildFile(InputFile buildFile) {
+        ((ForBuildFile) pkg).buildFile = checkNotNull(buildFile);
+      }
+
+      @Override
       public ForBuildFile finishBuild() {
         return (ForBuildFile) super.finishBuild();
+      }
+
+      @Override
+      protected void packageoidInitializationHook() {
+        super.packageoidInitializationHook();
+        getPackagePiece().computationSteps = getComputationSteps();
+        getPackagePiece().setMacrosByName(recorder.getMacroMap().values());
       }
 
       private Builder(
@@ -372,7 +303,8 @@ public abstract sealed class PackagePiece extends Packageoid
           @Nullable ImmutableMap<Location, String> generatorMap,
           @Nullable Globber globber,
           boolean enableNameConflictChecking,
-          boolean trackFullMacroInformation) {
+          boolean trackFullMacroInformation,
+          PackageLimits packageLimits) {
         super(
             forBuildFile.getMetadata(),
             forBuildFile,
@@ -387,31 +319,37 @@ public abstract sealed class PackagePiece extends Packageoid
             generatorMap,
             globber,
             enableNameConflictChecking,
-            trackFullMacroInformation);
+            trackFullMacroInformation,
+            /* enableTargetMapSnapshotting= */ false,
+            packageLimits);
       }
     }
   }
 
   /** A {@link PackagePiece} obtained by evaluating a symbolic macro instance. */
   public static final class ForMacro extends PackagePiece {
+    private final PackagePieceIdentifier.ForMacro identifier;
     private final MacroInstance evaluatedMacro;
-    private final PackagePiece.ForBuildFile pieceForBuildFile;
     // Null until the package piece is fully initialized by its builder's {@code finishBuild()}.
     @Nullable private ImmutableSet<String> macroNamespaceViolations = null;
 
     @Override
-    public PackagePiece.ForBuildFile getPackagePieceForBuildFile() {
-      return pieceForBuildFile;
+    public PackagePieceIdentifier.ForMacro getIdentifier() {
+      return identifier;
     }
 
     @Override
-    public Metadata getMetadata() {
-      return pieceForBuildFile.getMetadata();
+    public String getCanonicalFormDefinedBy() {
+      MacroClass macroClass = evaluatedMacro.getMacroClass();
+      return String.format(
+          "%s%%%s", macroClass.getDefiningBzlLabel().getCanonicalForm(), macroClass.getName());
     }
 
     @Override
-    public Declarations getDeclarations() {
-      return pieceForBuildFile.getDeclarations();
+    public String getShortDescription() {
+      return String.format(
+          "package piece %s defined by %s",
+          getIdentifier().getCanonicalFormName(), getCanonicalFormDefinedBy());
     }
 
     public MacroInstance getEvaluatedMacro() {
@@ -443,73 +381,61 @@ public abstract sealed class PackagePiece extends Packageoid
       }
     }
 
-    private ForMacro(MacroInstance evaluatedMacro, PackagePiece.ForBuildFile pieceForBuildFile) {
-      super(
-          new PackagePiece.ForMacro.Identifier(
-              pieceForBuildFile.getPackageIdentifier(),
-              evaluatedMacro.getMacroClass().getDefiningBzlLabel(),
-              /* definingSymbol= */ evaluatedMacro.getMacroClass().getName(),
-              /* instanceName= */ evaluatedMacro.getName()));
+    private static void checkIdentifierMatchesMacro(
+        PackagePieceIdentifier.ForMacro identifier, MacroInstance macro) {
+      checkArgument(
+          macro.getPackageMetadata().packageIdentifier().equals(identifier.getPackageIdentifier()));
+      checkArgument(macro.getName().equals(identifier.getInstanceName()));
+    }
+
+    private ForMacro(
+        Metadata metadata,
+        Declarations declarations,
+        MacroInstance evaluatedMacro,
+        PackagePieceIdentifier parentIdentifier) {
+      super(metadata, declarations);
+      checkArgument(
+          metadata
+              .packageIdentifier()
+              .equals(evaluatedMacro.getPackageMetadata().packageIdentifier()));
+      checkArgument(metadata.packageIdentifier().equals(parentIdentifier.getPackageIdentifier()));
+      if (evaluatedMacro.getParent() != null) {
+        checkIdentifierMatchesMacro(
+            (PackagePieceIdentifier.ForMacro) parentIdentifier, evaluatedMacro.getParent());
+      } else {
+        checkArgument(parentIdentifier instanceof PackagePieceIdentifier.ForBuildFile);
+      }
+      this.identifier =
+          new PackagePieceIdentifier.ForMacro(
+              metadata.packageIdentifier(), parentIdentifier, evaluatedMacro.getName());
       this.evaluatedMacro = evaluatedMacro;
-      this.pieceForBuildFile = pieceForBuildFile;
     }
 
     /** Creates a new {@link PackagePiece.ForMacro.Builder}. */
     // TODO(bazel-team): when JEP 482 ("flexible constructors") is enabled, we can remove this
     // method and use the builder's constructor directly.
     public static Builder newBuilder(
+        Metadata metadata,
+        Declarations declarations,
         MacroInstance evaluatedMacro,
-        PackagePiece.ForBuildFile pieceForBuildFile,
+        PackagePieceIdentifier parentIdentifier,
         boolean simplifyUnconditionalSelectsInRuleAttrs,
-        RepositoryMapping repositoryMapping,
         RepositoryMapping mainRepositoryMapping,
         @Nullable Semaphore cpuBoundSemaphore,
         PackageOverheadEstimator packageOverheadEstimator,
-        @Nullable ImmutableMap<Location, String> generatorMap,
         boolean enableNameConflictChecking,
-        boolean trackFullMacroInformation) {
-      ForMacro forMacro = new ForMacro(evaluatedMacro, pieceForBuildFile);
+        boolean trackFullMacroInformation,
+        PackageLimits packageLimits) {
+      ForMacro forMacro = new ForMacro(metadata, declarations, evaluatedMacro, parentIdentifier);
       return new Builder(
           forMacro,
           simplifyUnconditionalSelectsInRuleAttrs,
           mainRepositoryMapping,
           cpuBoundSemaphore,
           packageOverheadEstimator,
-          generatorMap,
           enableNameConflictChecking,
-          trackFullMacroInformation);
-    }
-
-    /**
-     * A unique identifier for a {@link PackagePiece.ForMacro}.
-     *
-     * <p>Exists purely as a memory optimization to avoid allocating the defining symbol and
-     * instance name for {@link PackagePiece.ForBuildFile} objects.
-     */
-    public static final class Identifier extends PackagePiece.Identifier {
-      private final String definingSymbol;
-      private final String instanceName;
-
-      @Override
-      public String getDefiningSymbol() {
-        return definingSymbol;
-      }
-
-      @Override
-      public String getInstanceName() {
-        return instanceName;
-      }
-
-      @VisibleForTesting
-      Identifier(
-          PackageIdentifier packageIdentifier,
-          Label definingLabel,
-          String definingSymbol,
-          String instanceName) {
-        super(packageIdentifier, definingLabel);
-        this.definingSymbol = checkNotNull(definingSymbol);
-        this.instanceName = checkNotNull(instanceName);
-      }
+          trackFullMacroInformation,
+          packageLimits);
     }
 
     /** A builder for {@link PackagePieceForMacro} objects. */
@@ -532,11 +458,6 @@ public abstract sealed class PackagePiece extends Packageoid
       }
 
       @Override
-      void setComputationSteps(long n) {
-        ((PackagePiece) pkg).computationSteps = n;
-      }
-
-      @Override
       @CanIgnoreReturnValue
       public Builder buildPartial() throws NoSuchPackageException {
         return (Builder) super.buildPartial();
@@ -549,7 +470,11 @@ public abstract sealed class PackagePiece extends Packageoid
 
       @Override
       protected void packageoidInitializationHook() {
-        getPackagePiece().macroNamespaceViolations =
+        getPackagePiece().computationSteps = getComputationSteps();
+        super.packageoidInitializationHook();
+        ForMacro forMacro = getPackagePiece();
+        forMacro.setMacrosByName(recorder.getMacroMap().values());
+        forMacro.macroNamespaceViolations =
             ImmutableSet.copyOf(recorder.getMacroNamespaceViolatingTargets().keySet());
       }
 
@@ -559,22 +484,24 @@ public abstract sealed class PackagePiece extends Packageoid
           RepositoryMapping mainRepositoryMapping,
           @Nullable Semaphore cpuBoundSemaphore,
           PackageOverheadEstimator packageOverheadEstimator,
-          @Nullable ImmutableMap<Location, String> generatorMap,
           boolean enableNameConflictChecking,
-          boolean trackFullMacroInformation) {
+          boolean trackFullMacroInformation,
+          PackageLimits packageLimits) {
         super(
             forMacro.getMetadata(),
             forMacro,
             SymbolGenerator.create(forMacro.getIdentifier()),
             simplifyUnconditionalSelectsInRuleAttrs,
-            forMacro.getPackagePieceForBuildFile().getDeclarations().getWorkspaceName(),
+            forMacro.getDeclarations().getWorkspaceName(),
             mainRepositoryMapping,
             cpuBoundSemaphore,
             packageOverheadEstimator,
-            generatorMap,
+            /* generatorMap= */ null,
             /* globber= */ null,
             enableNameConflictChecking,
-            trackFullMacroInformation);
+            trackFullMacroInformation,
+            /* enableTargetMapSnapshotting= */ false,
+            packageLimits);
       }
     }
   }
