@@ -326,11 +326,11 @@ java_library(
     visibility = ["//visibility:public"],
 )
 """,
-    sha256 = "562a0e87eb413a7dcad29ebc8d578f6f97503473943585b051c1398a58189b06",
-    strip_prefix = "TestParameterInjector-1.0",
+    sha256 = "f8f3b2d518fd257a3bdd7ca45ef147bbcd09775cc5dac4bf9535341aa6d2b9c6",
+    strip_prefix = "TestParameterInjector-1.22",
     urls = [
-        "https://mirror.bazel.build/github.com/google/TestParameterInjector/archive/v1.0.tar.gz",
-        "https://github.com/google/TestParameterInjector/archive/v1.0.tar.gz",
+        "https://mirror.bazel.build/github.com/google/TestParameterInjector/archive/v1.22.tar.gz",
+        "https://github.com/google/TestParameterInjector/archive/v1.22.tar.gz",
     ],
 )
 
